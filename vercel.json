@@ -7,5 +7,4 @@
     { "src": "/socket.io/(.*)", "dest": "server.js" },
     { "src": "/(.*)", "dest": "/public/$1" }
   ]
-   "installCommand": "npm install --force"
 }

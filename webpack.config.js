@@ -24,7 +24,7 @@ module.exports = {
   plugins: [
     new CopyWebpackPlugin({
       patterns: [
-        { from: 'src/client/assets', to: 'assets' },
+        { from: 'src/client/assets', to: 'assets', noErrorOnMissing: true },
         { from: 'src/client/index.html', to: 'index.html' },
       ],
     }),

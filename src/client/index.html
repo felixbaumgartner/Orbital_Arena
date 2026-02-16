@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Orbital Arena</title>
+    <title>Dutch Village Flight - June Skies</title>
     <style>
         * {
             margin: 0;
@@ -101,38 +101,52 @@
             text-align: right;
         }
 
-        .health-bar {
+        .bar-container {
             position: fixed;
-            bottom: 1rem;
             left: 1rem;
+            width: 220px;
+        }
+
+        .health-container {
+            bottom: 3.5rem;
+        }
+
+        .energy-container {
+            bottom: 1rem;
+        }
+
+        .bar-label {
+            font-size: 0.8rem;
+            margin-bottom: 0.25rem;
+            color: #fff;
+        }
+
+        .health-bar,
+        .energy-bar {
             width: 200px;
             height: 20px;
-            background: rgba(255, 0, 0, 0.3);
             border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .health-bar {
+            background: rgba(255, 0, 0, 0.3);
+        }
+
+        .energy-bar {
+            background: rgba(0, 170, 255, 0.3);
         }
 
         .health-fill {
             height: 100%;
             background: #ff0000;
-            border-radius: 10px;
-            transition: width 0.3s;
-        }
-
-        .energy-bar {
-            position: fixed;
-            bottom: 2rem;
-            left: 1rem;
-            width: 200px;
-            height: 20px;
-            background: rgba(0, 128, 255, 0.3);
-            border-radius: 10px;
+            transition: width 0.3s, background-color 0.3s;
         }
 
         .energy-fill {
             height: 100%;
-            background: #0080ff;
-            border-radius: 10px;
-            transition: width 0.3s;
+            background: #00aaff;
+            transition: width 0.3s, background-color 0.3s;
         }
 
         #tutorial {
@@ -140,11 +154,51 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.95);
             padding: 2rem;
             border-radius: 8px;
-            text-align: center;
+            text-align: left;
             display: none;
+            max-width: 500px;
+            border: 2px solid #4CAF50;
+        }
+
+        #tutorial h2 {
+            text-align: center;
+            color: #4CAF50;
+            margin-bottom: 1rem;
+        }
+
+        #tutorial p {
+            margin: 0.5rem 0;
+            line-height: 1.5;
+        }
+
+        #tutorial strong {
+            color: #4CAF50;
+            display: block;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        #tutorial-close {
+            margin-top: 1.5rem;
+            padding: 0.75rem 2rem;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        #tutorial-close:hover,
+        #tutorial-close:focus {
+            background: #45a049;
+            outline: 2px solid #fff;
         }
 
         #chat {
@@ -152,9 +206,61 @@
             bottom: 1rem;
             right: 1rem;
             width: 300px;
-            background: rgba(0, 0, 0, 0.5);
+            background: rgba(0, 0, 0, 0.7);
             border-radius: 4px;
-            display: none;
+            padding: 0.5rem;
+        }
+
+        .chat-message {
+            margin-bottom: 0.25rem;
+            font-size: 0.9rem;
+            word-wrap: break-word;
+        }
+
+        #controls-panel {
+            position: fixed;
+            top: 50%;
+            left: 1rem;
+            transform: translateY(-50%);
+            background: rgba(76, 175, 80, 0.9);
+            border-radius: 8px;
+            padding: 1rem;
+            font-size: 0.85rem;
+            line-height: 1.6;
+            border: 2px solid #2E7D32;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        #controls-panel h3 {
+            margin: 0 0 0.5rem 0;
+            color: #fff;
+            font-size: 1rem;
+            text-align: center;
+            border-bottom: 1px solid #fff;
+            padding-bottom: 0.5rem;
+        }
+
+        #controls-panel .control-section {
+            margin-bottom: 0.75rem;
+        }
+
+        #controls-panel .control-section:last-child {
+            margin-bottom: 0;
+        }
+
+        #controls-panel strong {
+            color: #FFEB3B;
+            display: block;
+            margin-bottom: 0.25rem;
+        }
+
+        #controls-panel .key {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
+            font-family: monospace;
+            font-weight: bold;
+            color: #fff;
         }
 
         #chat-messages {
@@ -179,13 +285,14 @@
             width: 20px;
             height: 20px;
             pointer-events: none;
+            opacity: 0.5;
         }
 
         .crosshair::before,
         .crosshair::after {
             content: '';
             position: absolute;
-            background: #fff;
+            background: #4CAF50;
         }
 
         .crosshair::before {
@@ -199,6 +306,13 @@
             height: 2px;
             top: 9px;
         }
+
+        /* Add focus styles for better keyboard navigation */
+        button:focus,
+        input:focus {
+            outline: 2px solid #4CAF50;
+            outline-offset: 2px;
+        }
     </style>
 </head>
 <body>
@@ -207,13 +321,39 @@
     <div id="ui-overlay">
         <div id="login-screen" class="ui-element">
             <div id="login-form">
-                <h1>Orbital Arena</h1>
-                <input type="text" id="username-input" placeholder="Enter username" maxlength="15">
-                <button id="start-button">Start Game</button>
+                <h1>✈️ Dutch Village Flight</h1>
+                <h2 style="color: #4CAF50; margin-top: 0;">June Skies</h2>
+                <input type="text" id="username-input" placeholder="Enter pilot name" maxlength="15">
+                <button id="start-button">Take Flight</button>
             </div>
         </div>
 
         <div id="hud">
+            <div id="controls-panel">
+                <h3>✈️ Flight Controls</h3>
+                <div class="control-section">
+                    <strong>Movement:</strong>
+                    <span class="key">W</span> Forward
+                    <span class="key">S</span> Back<br>
+                    <span class="key">A</span> Left
+                    <span class="key">D</span> Right
+                </div>
+                <div class="control-section">
+                    <strong>Rotate:</strong>
+                    <span class="key">Q</span> or <span class="key">←</span> Turn Left<br>
+                    <span class="key">E</span> or <span class="key">→</span> Turn Right
+                </div>
+                <div class="control-section">
+                    <strong>Combat:</strong>
+                    <span class="key">Space</span> Shoot
+                </div>
+                <div class="control-section">
+                    <strong>Special:</strong>
+                    <span class="key">Shift</span> Boost<br>
+                    <span class="key">Enter</span> Chat
+                </div>
+            </div>
+
             <div class="stats">
                 <div>Kills: <span id="kills">0</span></div>
                 <div>Deaths: <span id="deaths">0</span></div>
@@ -226,12 +366,18 @@
                 <div>Time: <span id="time-remaining">5:00</span></div>
             </div>
 
-            <div class="health-bar">
-                <div class="health-fill" style="width: 100%"></div>
+            <div class="bar-container health-container">
+                <div class="bar-label">Health</div>
+                <div class="health-bar">
+                    <div class="health-fill" style="width: 100%"></div>
+                </div>
             </div>
 
-            <div class="energy-bar">
-                <div class="energy-fill" style="width: 100%"></div>
+            <div class="bar-container energy-container">
+                <div class="bar-label">Energy (Hold Shift to Boost)</div>
+                <div class="energy-bar">
+                    <div class="energy-fill" style="width: 100%"></div>
+                </div>
             </div>
 
             <div class="crosshair"></div>
@@ -239,11 +385,17 @@
 
         <div id="tutorial">
             <h2>Quick Tutorial</h2>
-            <p>WASD - Move</p>
-            <p>Mouse - Aim</p>
-            <p>Left Click - Shoot</p>
-            <p>Shift - Boost</p>
-            <p>T - Team Chat</p>
+            <p><strong>Movement:</strong></p>
+            <p>W - Forward | S - Backward</p>
+            <p>A - Strafe Left | D - Strafe Right</p>
+            <p><strong>Combat:</strong></p>
+            <p>Q or ← - Rotate Left</p>
+            <p>E or → - Rotate Right</p>
+            <p>Space - Shoot</p>
+            <p><strong>Special:</strong></p>
+            <p>Shift - Boost (drains energy)</p>
+            <p>Enter - Chat</p>
+            <p><strong>ESC or Enter to close this tutorial</strong></p>
             <button id="tutorial-close">Got it!</button>
         </div>
 

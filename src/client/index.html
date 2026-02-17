@@ -340,6 +340,34 @@
             from { transform: scale(1); opacity: 1; }
             to { transform: scale(1.1); opacity: 0.7; }
         }
+
+        #takeoff-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+            pointer-events: none;
+            background: linear-gradient(to top, rgba(0,0,0,0.3), transparent 50%);
+        }
+
+        #takeoff-overlay .takeoff-text {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 20px #4CAF50, 0 0 40px #4CAF50;
+            animation: takeoffPulse 0.8s ease-in-out infinite alternate;
+            letter-spacing: 0.3rem;
+        }
+
+        @keyframes takeoffPulse {
+            from { transform: scale(1); opacity: 0.8; }
+            to { transform: scale(1.05); opacity: 1; }
+        }
     </style>
 </head>
 <body>
@@ -429,6 +457,10 @@
             <div id="chat-messages"></div>
             <input type="text" id="chat-input" placeholder="Press Enter to chat">
         </div>
+    </div>
+
+    <div id="takeoff-overlay">
+        <div class="takeoff-text" id="takeoff-text">PREPARING FOR TAKEOFF...</div>
     </div>
 
     <div id="crash-overlay">

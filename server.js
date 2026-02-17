@@ -14,10 +14,8 @@ const GAME_CONFIG = {
   RESPAWN_DELAY: 3000,
   MATCH_DURATION: 300000, // 5 minutes
 
-  // Movement and position limits
-  ARENA_BOUNDS_MIN: -95,
-  ARENA_BOUNDS_MAX: 95,
-  MAX_POSITION_CHANGE_PER_FRAME: 10, // Teleport detection threshold
+  // Movement and position limits (no bounds - infinite world)
+  MAX_POSITION_CHANGE_PER_FRAME: 50, // Relaxed for free flight
 
   // Validation
   USERNAME_MAX_LENGTH: 15,
@@ -76,30 +74,27 @@ function sanitizeInput(input) {
 }
 
 /**
- * Validates position is within arena bounds
+ * Validates position has valid numeric coordinates
  * @param {object} position - Position object with x, y, z
  * @returns {boolean} Whether position is valid
  */
 function isValidPosition(position) {
   if (!position || typeof position !== 'object') return false;
   if (typeof position.x !== 'number' || typeof position.z !== 'number') return false;
-
-  return position.x >= GAME_CONFIG.ARENA_BOUNDS_MIN &&
-         position.x <= GAME_CONFIG.ARENA_BOUNDS_MAX &&
-         position.z >= GAME_CONFIG.ARENA_BOUNDS_MIN &&
-         position.z <= GAME_CONFIG.ARENA_BOUNDS_MAX;
+  if (!isFinite(position.x) || !isFinite(position.z)) return false;
+  return true;
 }
 
 /**
- * Clamps position within arena bounds
+ * Sanitizes position values
  * @param {object} position - Position object with x, y, z
- * @returns {object} Clamped position
+ * @returns {object} Sanitized position
  */
 function clampPosition(position) {
   return {
-    x: Math.max(GAME_CONFIG.ARENA_BOUNDS_MIN, Math.min(GAME_CONFIG.ARENA_BOUNDS_MAX, position.x || 0)),
+    x: isFinite(position.x) ? position.x : 0,
     y: position.y || 0,
-    z: Math.max(GAME_CONFIG.ARENA_BOUNDS_MIN, Math.min(GAME_CONFIG.ARENA_BOUNDS_MAX, position.z || 0)),
+    z: isFinite(position.z) ? position.z : 0,
   };
 }
 

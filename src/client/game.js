@@ -5,25 +5,23 @@ import { io } from 'socket.io-client';
 const GAME_CONFIG = {
   CAMERA_FOV: 75,
   CAMERA_NEAR: 0.1,
-  CAMERA_FAR: 1000,
+  CAMERA_FAR: 2000,
   CAMERA_DISTANCE: 20,
   CAMERA_HEIGHT: 10,
 
-  ARENA_SIZE: 200,
-  ARENA_BOUNDS_MIN: -95,
-  ARENA_BOUNDS_MAX: 95,
-  PROJECTILE_BOUNDS: 100,
+  CHUNK_SIZE: 200,
+  VIEW_DISTANCE: 2,
+  FOG_NEAR: 200,
+  FOG_FAR: 700,
+  GROUND_SIZE: 2000,
+
+  PROJECTILE_DESPAWN_DIST: 250,
 
   MOVEMENT_SPEED: 50,
   BOOST_SPEED: 100,
-  ENERGY_DRAIN_RATE: 20, // Energy per second when boosting
-  ENERGY_REGEN_RATE: 10, // Energy per second when not boosting
+  ENERGY_DRAIN_RATE: 20,
+  ENERGY_REGEN_RATE: 10,
 
-  FLOOR_COLOR: 0x333333,
-  OBSTACLE_COLOR: 0x666666,
-  WALL_COLOR: 0x444444,
-  TEAM_RED_COLOR: 0xff0000,
-  TEAM_BLUE_COLOR: 0x0000ff,
   PROJECTILE_COLOR: 0x00ff00,
 
   USERNAME_MAX_LENGTH: 15,
@@ -33,6 +31,22 @@ const GAME_CONFIG = {
   RECONNECT_ATTEMPTS: 5,
   RECONNECT_DELAY: 1000,
 };
+
+// Unique vibrant colors for each player
+const PLAYER_COLORS = [
+  0xFF3E3E, // Bright Red
+  0x3EA8FF, // Sky Blue
+  0xFF9F1C, // Tangerine
+  0x2ECC71, // Emerald
+  0x9B59B6, // Amethyst
+  0xF1C40F, // Sunflower
+  0x1ABC9C, // Turquoise
+  0xE91E9C, // Hot Pink
+  0x00D4FF, // Cyan
+  0xFF6B6B, // Coral
+  0x45B7D1, // Steel Blue
+  0xFFA07A, // Light Salmon
+];
 
 /**
  * Main game class that handles rendering, input, networking, and game logic
@@ -65,7 +79,13 @@ class Game {
       rotateLeft: false,
       rotateRight: false,
     };
-    this.shipRotation = 0; // Track ship rotation angle
+    this.shipRotation = 0;
+
+    // Infinite terrain
+    this.chunks = new Map();
+    this.groundPlane = null;
+    this.cloudGroup = null;
+    this.animationTime = 0;
 
     this.init();
   }
@@ -76,24 +96,31 @@ class Game {
     this.renderer.setPixelRatio(window.devicePixelRatio);
     document.getElementById('game-container').appendChild(this.renderer.domElement);
 
-    // Setup camera - higher for aerial view
+    // Setup camera
     this.camera.position.set(0, 50, 40);
     this.camera.lookAt(0, 0, 0);
 
-    // Add sky background - clear June sky
-    this.scene.background = new THREE.Color(0x87CEEB); // Sky blue
+    // Sky background
+    this.scene.background = new THREE.Color(0x87CEEB);
 
-    // Add bright ambient light for sunny day
+    // Fog for infinite terrain illusion
+    this.scene.fog = new THREE.Fog(0x87CEEB, GAME_CONFIG.FOG_NEAR, GAME_CONFIG.FOG_FAR);
+
+    // Bright ambient light for sunny day
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
     this.scene.add(ambientLight);
 
-    // Add sun (directional light)
+    // Sun directional light
     const sunLight = new THREE.DirectionalLight(0xffeb99, 1.2);
     sunLight.position.set(50, 100, 50);
     this.scene.add(sunLight);
 
-    // Add Dutch village
-    this.createDutchVillage();
+    // Hemisphere light for sky/ground color blending
+    const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x4CAF50, 0.3);
+    this.scene.add(hemiLight);
+
+    // Create infinite terrain
+    this.createInfiniteTerrain();
 
     // Setup event listeners
     window.addEventListener('resize', this.onWindowResize.bind(this));
@@ -122,7 +149,6 @@ class Game {
     startButton.addEventListener('click', () => {
       const username = this.sanitizeInput(usernameInput.value.trim());
 
-      // Validate username
       if (!this.isValidUsername(username)) {
         alert(`Username must be between ${GAME_CONFIG.USERNAME_MIN_LENGTH} and ${GAME_CONFIG.USERNAME_MAX_LENGTH} characters and contain only letters, numbers, and spaces.`);
         return;
@@ -132,14 +158,12 @@ class Game {
       loginScreen.style.display = 'none';
       hud.style.display = 'block';
 
-      // Show tutorial for first-time players
       if (!localStorage.getItem('tutorialSeen')) {
         tutorial.style.display = 'block';
         localStorage.setItem('tutorialSeen', 'true');
       }
     });
 
-    // Allow Enter key to start game
     usernameInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         startButton.click();
@@ -150,7 +174,6 @@ class Game {
       tutorial.style.display = 'none';
     });
 
-    // Allow closing tutorial with keyboard (ESC or Enter)
     document.addEventListener('keydown', (e) => {
       if (tutorial.style.display === 'block' && (e.key === 'Escape' || e.key === 'Enter')) {
         tutorial.style.display = 'none';
@@ -176,7 +199,6 @@ class Game {
     if (!username || typeof username !== 'string') return false;
     if (username.length < GAME_CONFIG.USERNAME_MIN_LENGTH ||
         username.length > GAME_CONFIG.USERNAME_MAX_LENGTH) return false;
-    // Allow only alphanumeric characters and spaces
     return /^[a-zA-Z0-9 ]+$/.test(username);
   }
 
@@ -207,181 +229,385 @@ class Game {
     }
   }
 
+  // =========================================================================
+  // INFINITE TERRAIN SYSTEM
+  // =========================================================================
+
   /**
-   * Creates a Dutch village scene with green fields and buildings
+   * Creates the infinite terrain: ground plane, clouds, and initial chunks
    */
-  createDutchVillage() {
-    // Create green grass field
-    const grassGeometry = new THREE.PlaneGeometry(GAME_CONFIG.ARENA_SIZE, GAME_CONFIG.ARENA_SIZE);
+  createInfiniteTerrain() {
+    // Large ground plane that follows the player
+    const grassGeometry = new THREE.PlaneGeometry(
+      GAME_CONFIG.GROUND_SIZE, GAME_CONFIG.GROUND_SIZE, 32, 32
+    );
     const grassMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4CAF50, // Lush green grass
+      color: 0x4CAF50,
       roughness: 0.9,
     });
-    const grass = new THREE.Mesh(grassGeometry, grassMaterial);
-    grass.rotation.x = -Math.PI / 2;
-    grass.receiveShadow = true;
-    this.scene.add(grass);
+    this.groundPlane = new THREE.Mesh(grassGeometry, grassMaterial);
+    this.groundPlane.rotation.x = -Math.PI / 2;
+    this.groundPlane.receiveShadow = true;
+    this.scene.add(this.groundPlane);
 
-    // Add Dutch buildings
-    this.createDutchBuildings();
-
-    // Add trees
-    this.createTrees();
-
-    // Add clouds
+    // Cloud group that follows the player
+    this.cloudGroup = new THREE.Group();
     this.createClouds();
+    this.scene.add(this.cloudGroup);
+
+    // Generate initial chunks around the origin
+    this.updateChunks(0, 0);
   }
 
   /**
-   * Creates Dutch-style buildings in the village
+   * Deterministic pseudo-random from a seed
    */
-  createDutchBuildings() {
-    const buildings = [
-      { x: -40, z: -30, width: 15, height: 12, depth: 12, color: 0xD2691E }, // Brown house
-      { x: 40, z: 30, width: 18, height: 15, depth: 15, color: 0xCD853F }, // Tan house
-      { x: -30, z: 40, width: 12, height: 10, depth: 10, color: 0xBC8F8F }, // Rosy brown
-      { x: 35, z: -35, width: 20, height: 18, depth: 14, color: 0xA0522D }, // Sienna
-      { x: 0, z: -50, width: 25, height: 20, depth: 18, color: 0x8B4513 }, // Saddle brown (church)
-    ];
+  seededRandom(seed) {
+    const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    return x - Math.floor(x);
+  }
 
-    buildings.forEach(building => {
-      // Create building body
-      const wallGeometry = new THREE.BoxGeometry(building.width, building.height, building.depth);
-      const wallMaterial = new THREE.MeshStandardMaterial({
-        color: building.color,
-        roughness: 0.8,
-      });
-      const walls = new THREE.Mesh(wallGeometry, wallMaterial);
-      walls.position.set(building.x, building.height / 2, building.z);
+  /**
+   * Loads/unloads terrain chunks around the player
+   */
+  updateChunks(playerX, playerZ) {
+    const cx = Math.floor(playerX / GAME_CONFIG.CHUNK_SIZE);
+    const cz = Math.floor(playerZ / GAME_CONFIG.CHUNK_SIZE);
+
+    const needed = new Set();
+    for (let dx = -GAME_CONFIG.VIEW_DISTANCE; dx <= GAME_CONFIG.VIEW_DISTANCE; dx++) {
+      for (let dz = -GAME_CONFIG.VIEW_DISTANCE; dz <= GAME_CONFIG.VIEW_DISTANCE; dz++) {
+        needed.add(`${cx + dx},${cz + dz}`);
+      }
+    }
+
+    // Unload distant chunks
+    for (const [key, objects] of this.chunks) {
+      if (!needed.has(key)) {
+        objects.forEach(obj => {
+          this.scene.remove(obj);
+          obj.traverse(child => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+              if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+              else child.material.dispose();
+            }
+          });
+        });
+        this.chunks.delete(key);
+      }
+    }
+
+    // Load new chunks
+    for (const key of needed) {
+      if (!this.chunks.has(key)) {
+        const [x, z] = key.split(',').map(Number);
+        this.generateChunk(x, z);
+      }
+    }
+  }
+
+  /**
+   * Generates scenery for a single terrain chunk
+   */
+  generateChunk(chunkX, chunkZ) {
+    const objects = [];
+    const baseX = chunkX * GAME_CONFIG.CHUNK_SIZE;
+    const baseZ = chunkZ * GAME_CONFIG.CHUNK_SIZE;
+    const seed = chunkX * 73856093 + chunkZ * 19349663;
+
+    // Buildings (2-4 per chunk)
+    const numBuildings = 2 + Math.floor(this.seededRandom(seed) * 3);
+    for (let i = 0; i < numBuildings; i++) {
+      const s = seed + i * 1000;
+      const x = baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE;
+      const z = baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE;
+      const w = 10 + this.seededRandom(s + 3) * 15;
+      const h = 8 + this.seededRandom(s + 4) * 15;
+      const d = 8 + this.seededRandom(s + 5) * 12;
+
+      const colors = [0xD2691E, 0xCD853F, 0xBC8F8F, 0xA0522D, 0x8B4513, 0xDEB887];
+      const c = colors[Math.floor(this.seededRandom(s + 6) * colors.length)];
+
+      const wallGeo = new THREE.BoxGeometry(w, h, d);
+      const wallMat = new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 });
+      const walls = new THREE.Mesh(wallGeo, wallMat);
+      walls.position.set(x, h / 2, z);
       this.scene.add(walls);
+      objects.push(walls);
 
-      // Create red-tiled roof
-      const roofGeometry = new THREE.ConeGeometry(building.width * 0.8, building.height * 0.4, 4);
-      const roofMaterial = new THREE.MeshStandardMaterial({
-        color: 0xB22222, // Firebrick red (Dutch tile roofs)
-        roughness: 0.7,
-      });
-      const roof = new THREE.Mesh(roofGeometry, roofMaterial);
-      roof.position.set(building.x, building.height + building.height * 0.2, building.z);
+      const roofGeo = new THREE.ConeGeometry(w * 0.8, h * 0.4, 4);
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0xB22222, roughness: 0.7 });
+      const roof = new THREE.Mesh(roofGeo, roofMat);
+      roof.position.set(x, h + h * 0.2, z);
       roof.rotation.y = Math.PI / 4;
       this.scene.add(roof);
-    });
-  }
+      objects.push(roof);
+    }
 
-  /**
-   * Creates trees around the village
-   */
-  createTrees() {
-    const treePositions = [
-      { x: -60, z: 10 }, { x: -55, z: -15 }, { x: 60, z: -10 },
-      { x: 55, z: 20 }, { x: -10, z: 60 }, { x: 15, z: -60 },
-      { x: -70, z: 45 }, { x: 70, z: -45 }, { x: 25, z: 55 },
-    ];
+    // Trees (5-10 per chunk)
+    const numTrees = 5 + Math.floor(this.seededRandom(seed + 500) * 6);
+    for (let i = 0; i < numTrees; i++) {
+      const s = seed + 2000 + i * 100;
+      const x = baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE;
+      const z = baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE;
+      const scale = 0.7 + this.seededRandom(s + 3) * 0.6;
 
-    treePositions.forEach(pos => {
-      // Tree trunk
-      const trunkGeometry = new THREE.CylinderGeometry(1, 1.5, 8);
-      const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
-      const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
-      trunk.position.set(pos.x, 4, pos.z);
+      const trunkGeo = new THREE.CylinderGeometry(1 * scale, 1.5 * scale, 8 * scale);
+      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.position.set(x, 4 * scale, z);
       this.scene.add(trunk);
+      objects.push(trunk);
 
-      // Tree foliage (green, it's June!)
-      const foliageGeometry = new THREE.SphereGeometry(6, 8, 8);
-      const foliageMaterial = new THREE.MeshStandardMaterial({
-        color: 0x228B22, // Forest green
-        roughness: 0.9,
-      });
-      const foliage = new THREE.Mesh(foliageGeometry, foliageMaterial);
-      foliage.position.set(pos.x, 12, pos.z);
+      const foliageGeo = new THREE.SphereGeometry(6 * scale, 8, 8);
+      const green = this.seededRandom(s + 4) > 0.5 ? 0x228B22 : 0x2E8B57;
+      const foliageMat = new THREE.MeshStandardMaterial({ color: green, roughness: 0.9 });
+      const foliage = new THREE.Mesh(foliageGeo, foliageMat);
+      foliage.position.set(x, 12 * scale, z);
       this.scene.add(foliage);
-    });
+      objects.push(foliage);
+    }
+
+    // Occasional windmill (Dutch theme)
+    if (this.seededRandom(seed + 999) > 0.6) {
+      const wx = baseX + GAME_CONFIG.CHUNK_SIZE / 2;
+      const wz = baseZ + GAME_CONFIG.CHUNK_SIZE / 2;
+
+      const towerGeo = new THREE.CylinderGeometry(3, 4, 25, 8);
+      const towerMat = new THREE.MeshStandardMaterial({ color: 0xF5F5DC, roughness: 0.6 });
+      const tower = new THREE.Mesh(towerGeo, towerMat);
+      tower.position.set(wx, 12.5, wz);
+      this.scene.add(tower);
+      objects.push(tower);
+
+      const capGeo = new THREE.ConeGeometry(4, 5, 8);
+      const capMat = new THREE.MeshStandardMaterial({ color: 0x8B0000, roughness: 0.7 });
+      const cap = new THREE.Mesh(capGeo, capMat);
+      cap.position.set(wx, 27, wz);
+      this.scene.add(cap);
+      objects.push(cap);
+
+      // Windmill blades
+      const bladesGroup = new THREE.Group();
+      for (let b = 0; b < 4; b++) {
+        const bladeGeo = new THREE.BoxGeometry(1, 12, 0.3);
+        const bladeMat = new THREE.MeshStandardMaterial({ color: 0xDEB887 });
+        const blade = new THREE.Mesh(bladeGeo, bladeMat);
+        blade.position.y = 6;
+        blade.rotation.z = (b * Math.PI) / 2;
+        bladesGroup.add(blade);
+      }
+      bladesGroup.position.set(wx, 25, wz - 4.5);
+      this.scene.add(bladesGroup);
+      objects.push(bladesGroup);
+    }
+
+    this.chunks.set(`${chunkX},${chunkZ}`, objects);
   }
 
   /**
-   * Creates white fluffy clouds in the sky
+   * Creates floating clouds that follow the player
    */
   createClouds() {
-    const cloudPositions = [
-      { x: -80, y: 60, z: -80 }, { x: 60, y: 70, z: -60 },
-      { x: -50, y: 65, z: 70 }, { x: 80, y: 75, z: 50 },
-    ];
-
-    cloudPositions.forEach(pos => {
-      // Create cloud from multiple spheres
-      const cloudGroup = new THREE.Group();
-
-      for (let i = 0; i < 5; i++) {
-        const cloudGeometry = new THREE.SphereGeometry(8 + Math.random() * 4, 8, 8);
-        const cloudMaterial = new THREE.MeshStandardMaterial({
+    for (let i = 0; i < 10; i++) {
+      const cloudSubGroup = new THREE.Group();
+      for (let j = 0; j < 5; j++) {
+        const cloudGeo = new THREE.SphereGeometry(8 + Math.random() * 6, 8, 8);
+        const cloudMat = new THREE.MeshStandardMaterial({
           color: 0xFFFFFF,
           transparent: true,
           opacity: 0.8,
           roughness: 1,
         });
-        const cloudPart = new THREE.Mesh(cloudGeometry, cloudMaterial);
+        const cloudPart = new THREE.Mesh(cloudGeo, cloudMat);
         cloudPart.position.set(
           (Math.random() - 0.5) * 15,
           (Math.random() - 0.5) * 5,
           (Math.random() - 0.5) * 15
         );
-        cloudGroup.add(cloudPart);
+        cloudSubGroup.add(cloudPart);
       }
+      cloudSubGroup.position.set(
+        (Math.random() - 0.5) * 800,
+        55 + Math.random() * 30,
+        (Math.random() - 0.5) * 800
+      );
+      this.cloudGroup.add(cloudSubGroup);
+    }
+  }
 
-      cloudGroup.position.set(pos.x, pos.y, pos.z);
-      this.scene.add(cloudGroup);
-    });
+  // =========================================================================
+  // PLAYER SHIP
+  // =========================================================================
+
+  /**
+   * Gets a unique color for a player based on their socket ID
+   */
+  getPlayerColor(playerId) {
+    let hash = 0;
+    for (let i = 0; i < playerId.length; i++) {
+      hash = ((hash << 5) - hash) + playerId.charCodeAt(i);
+      hash |= 0;
+    }
+    return PLAYER_COLORS[Math.abs(hash) % PLAYER_COLORS.length];
   }
 
   /**
-   * Creates a 3D plane model for a player
-   * @param {number} color - Hex color code for the plane
+   * Creates a flashy modern jet fighter model
+   * @param {number} color - Hex color for the plane
    */
   createPlayerShip(color) {
     const planeGroup = new THREE.Group();
 
-    // Fuselage (main body)
-    const fuselageGeometry = new THREE.CylinderGeometry(0.8, 1, 8, 8);
-    const fuselageMaterial = new THREE.MeshStandardMaterial({ color });
-    const fuselage = new THREE.Mesh(fuselageGeometry, fuselageMaterial);
+    const mainMat = new THREE.MeshStandardMaterial({
+      color: color,
+      metalness: 0.8,
+      roughness: 0.15,
+      side: THREE.DoubleSide,
+    });
+
+    const chromeMat = new THREE.MeshStandardMaterial({
+      color: 0xEEEEEE,
+      metalness: 0.95,
+      roughness: 0.05,
+    });
+
+    const glowMat = new THREE.MeshStandardMaterial({
+      color: color,
+      emissive: color,
+      emissiveIntensity: 0.8,
+      metalness: 0.5,
+      roughness: 0.3,
+    });
+
+    // --- Fuselage (sleek tapered body) ---
+    const fuselageGeo = new THREE.CylinderGeometry(0.5, 0.85, 10, 12);
+    const fuselage = new THREE.Mesh(fuselageGeo, mainMat);
     fuselage.rotation.x = Math.PI / 2;
     planeGroup.add(fuselage);
 
-    // Nose cone
-    const noseGeometry = new THREE.ConeGeometry(0.8, 2, 8);
-    const nose = new THREE.Mesh(noseGeometry, fuselageMaterial);
+    // --- Nose cone (sharp chrome tip) ---
+    const noseGeo = new THREE.ConeGeometry(0.5, 3.5, 12);
+    const nose = new THREE.Mesh(noseGeo, chromeMat);
     nose.rotation.x = Math.PI / 2;
-    nose.position.set(0, 0, -5);
+    nose.position.set(0, 0, -6.7);
     planeGroup.add(nose);
 
-    // Main wings
-    const wingGeometry = new THREE.BoxGeometry(16, 0.3, 4);
-    const wingMaterial = new THREE.MeshStandardMaterial({ color });
-    const wings = new THREE.Mesh(wingGeometry, wingMaterial);
-    wings.position.set(0, 0, 1);
-    planeGroup.add(wings);
+    // --- Cockpit canopy (glass bubble) ---
+    const canopyGeo = new THREE.SphereGeometry(0.6, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+    const canopyMat = new THREE.MeshStandardMaterial({
+      color: 0x66AAFF,
+      metalness: 0.1,
+      roughness: 0.05,
+      transparent: true,
+      opacity: 0.45,
+    });
+    const canopy = new THREE.Mesh(canopyGeo, canopyMat);
+    canopy.position.set(0, 0.5, -2.5);
+    planeGroup.add(canopy);
 
-    // Tail wings
-    const tailWingGeometry = new THREE.BoxGeometry(6, 0.3, 2);
-    const tailWings = new THREE.Mesh(tailWingGeometry, wingMaterial);
-    tailWings.position.set(0, 0, 4);
-    planeGroup.add(tailWings);
+    // --- Swept delta wings ---
+    const wingShape = new THREE.Shape();
+    wingShape.moveTo(0, -1.5);     // center leading edge
+    wingShape.lineTo(10, 2.5);     // right tip swept back
+    wingShape.lineTo(9, 4.5);      // right trailing edge
+    wingShape.lineTo(0, 2);        // center trailing edge
+    wingShape.lineTo(-9, 4.5);     // left trailing edge
+    wingShape.lineTo(-10, 2.5);    // left tip swept back
+    wingShape.closePath();
 
-    // Vertical stabilizer (tail fin)
-    const stabilizerGeometry = new THREE.BoxGeometry(0.3, 3, 2);
-    const stabilizer = new THREE.Mesh(stabilizerGeometry, wingMaterial);
-    stabilizer.position.set(0, 1.5, 4);
-    planeGroup.add(stabilizer);
+    const wingGeo = new THREE.ShapeGeometry(wingShape);
+    const wing = new THREE.Mesh(wingGeo, mainMat);
+    wing.rotation.x = -Math.PI / 2;
+    wing.position.set(0, -0.05, 0);
+    planeGroup.add(wing);
 
-    // Propeller
-    const propellerGeometry = new THREE.BoxGeometry(6, 0.2, 0.5);
-    const propellerMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
-    const propeller = new THREE.Mesh(propellerGeometry, propellerMaterial);
-    propeller.position.set(0, 0, -6);
-    planeGroup.add(propeller);
+    // --- Glowing accent stripe along fuselage ---
+    const stripeGeo = new THREE.BoxGeometry(0.15, 0.15, 8);
+    const leftStripe = new THREE.Mesh(stripeGeo, glowMat);
+    leftStripe.position.set(0.6, 0, 0);
+    planeGroup.add(leftStripe);
+    const rightStripe = new THREE.Mesh(stripeGeo, glowMat);
+    rightStripe.position.set(-0.6, 0, 0);
+    planeGroup.add(rightStripe);
 
-    // Add rotation animation data for propeller
-    planeGroup.userData.propeller = propeller;
+    // --- Twin angled tail fins (like F-22) ---
+    const finGeo = new THREE.BoxGeometry(0.15, 3.5, 2.5);
+    const leftFin = new THREE.Mesh(finGeo, mainMat);
+    leftFin.position.set(-1.2, 1.5, 4);
+    leftFin.rotation.z = -0.3;
+    planeGroup.add(leftFin);
+
+    const rightFin = new THREE.Mesh(finGeo, mainMat);
+    rightFin.position.set(1.2, 1.5, 4);
+    rightFin.rotation.z = 0.3;
+    planeGroup.add(rightFin);
+
+    // --- Small horizontal tail wings ---
+    const tailGeo = new THREE.BoxGeometry(5, 0.12, 2);
+    const tail = new THREE.Mesh(tailGeo, mainMat);
+    tail.position.set(0, 0, 4.2);
+    planeGroup.add(tail);
+
+    // --- Twin engine exhausts ---
+    const exhaustGeo = new THREE.CylinderGeometry(0.35, 0.45, 1.5, 8);
+    const exhaustMat = new THREE.MeshStandardMaterial({
+      color: 0x222222,
+      metalness: 0.95,
+      roughness: 0.15,
+    });
+
+    const leftExhaust = new THREE.Mesh(exhaustGeo, exhaustMat);
+    leftExhaust.rotation.x = Math.PI / 2;
+    leftExhaust.position.set(-0.6, 0, 5.5);
+    planeGroup.add(leftExhaust);
+
+    const rightExhaust = new THREE.Mesh(exhaustGeo, exhaustMat);
+    rightExhaust.rotation.x = Math.PI / 2;
+    rightExhaust.position.set(0.6, 0, 5.5);
+    planeGroup.add(rightExhaust);
+
+    // --- Afterburner glow ---
+    const abGeo = new THREE.SphereGeometry(0.3, 8, 8);
+    const abMat = new THREE.MeshStandardMaterial({
+      color: 0xFF6600,
+      emissive: 0xFF4400,
+      emissiveIntensity: 2.0,
+      transparent: true,
+      opacity: 0.85,
+    });
+
+    const leftAB = new THREE.Mesh(abGeo, abMat);
+    leftAB.position.set(-0.6, 0, 6.3);
+    planeGroup.add(leftAB);
+
+    const rightAB = new THREE.Mesh(abGeo, abMat);
+    rightAB.position.set(0.6, 0, 6.3);
+    planeGroup.add(rightAB);
+
+    // --- Wing-tip nav lights (player color glow) ---
+    const navGeo = new THREE.SphereGeometry(0.2, 6, 6);
+    const navMat = new THREE.MeshStandardMaterial({
+      color: color,
+      emissive: color,
+      emissiveIntensity: 1.5,
+    });
+
+    const leftNav = new THREE.Mesh(navGeo, navMat);
+    leftNav.position.set(-9.5, 0.1, 2.8);
+    planeGroup.add(leftNav);
+
+    const rightNav = new THREE.Mesh(navGeo, navMat);
+    rightNav.position.set(9.5, 0.1, 2.8);
+    planeGroup.add(rightNav);
+
+    // Store refs for animation
+    planeGroup.userData.leftAB = leftAB;
+    planeGroup.userData.rightAB = rightAB;
+    planeGroup.userData.navLights = [leftNav, rightNav];
+    planeGroup.userData.glowMat = glowMat;
+    planeGroup.userData.abMat = abMat;
 
     return planeGroup;
   }
@@ -399,8 +625,12 @@ class Game {
     return new THREE.Mesh(geometry, material);
   }
 
+  // =========================================================================
+  // NETWORKING
+  // =========================================================================
+
   /**
-   * Connects to the game server with error handling and reconnection logic
+   * Connects to the game server
    * @param {string} username - Player's chosen username
    */
   connectToServer(username) {
@@ -433,7 +663,6 @@ class Game {
         this.isConnected = false;
 
         if (reason === 'io server disconnect') {
-          // Server disconnected us, attempt manual reconnection
           this.socket.connect();
         }
       });
@@ -442,9 +671,9 @@ class Game {
         this.gameState = data.gameState;
         this.localPlayer = data.player;
 
-        // Create local player ship
-        const teamColor = data.player.team === 'red' ? GAME_CONFIG.TEAM_RED_COLOR : GAME_CONFIG.TEAM_BLUE_COLOR;
-        const ship = this.createPlayerShip(teamColor);
+        // Create local player ship with unique color
+        const myColor = this.getPlayerColor(data.player.id);
+        const ship = this.createPlayerShip(myColor);
         ship.position.copy(this.localPlayer.position);
         this.scene.add(ship);
         this.players.set(this.localPlayer.id, ship);
@@ -453,8 +682,8 @@ class Game {
         if (data.gameState.players) {
           data.gameState.players.forEach(player => {
             if (player.id !== this.localPlayer.id) {
-              const otherTeamColor = player.team === 'red' ? GAME_CONFIG.TEAM_RED_COLOR : GAME_CONFIG.TEAM_BLUE_COLOR;
-              const otherShip = this.createPlayerShip(otherTeamColor);
+              const otherColor = this.getPlayerColor(player.id);
+              const otherShip = this.createPlayerShip(otherColor);
               otherShip.position.copy(player.position);
               this.scene.add(otherShip);
               this.players.set(player.id, otherShip);
@@ -468,8 +697,8 @@ class Game {
 
       this.socket.on('playerJoined', (player) => {
         if (player && player.id) {
-          const teamColor = player.team === 'red' ? GAME_CONFIG.TEAM_RED_COLOR : GAME_CONFIG.TEAM_BLUE_COLOR;
-          const ship = this.createPlayerShip(teamColor);
+          const playerColor = this.getPlayerColor(player.id);
+          const ship = this.createPlayerShip(playerColor);
           ship.position.copy(player.position);
           this.scene.add(ship);
           this.players.set(player.id, ship);
@@ -528,11 +757,10 @@ class Game {
     }
   }
 
-  /**
-   * Displays a chat message in the chat box
-   * @param {string} username - Username of the sender
-   * @param {string} message - Chat message content
-   */
+  // =========================================================================
+  // HUD & UI
+  // =========================================================================
+
   displayChatMessage(username, message) {
     const chatMessages = document.getElementById('chat-messages');
     if (!chatMessages) return;
@@ -544,16 +772,11 @@ class Game {
     chatMessages.appendChild(messageElement);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
-    // Remove old messages to prevent memory leaks
     while (chatMessages.children.length > 50) {
       chatMessages.removeChild(chatMessages.firstChild);
     }
   }
 
-  /**
-   * Updates the health bar UI
-   * @param {number} damage - Amount of damage taken
-   */
   updateHealth(damage) {
     const healthFill = document.querySelector('.health-fill');
     if (!healthFill) return;
@@ -563,10 +786,6 @@ class Game {
     healthFill.style.width = `${newWidth}%`;
   }
 
-  /**
-   * Updates the energy bar UI
-   * @param {number} energyPercent - Energy level as percentage (0-100)
-   */
   updateEnergyBar(energyPercent) {
     const energyFill = document.querySelector('.energy-fill');
     if (!energyFill) return;
@@ -574,7 +793,6 @@ class Game {
     const clampedEnergy = Math.max(0, Math.min(100, energyPercent));
     energyFill.style.width = `${clampedEnergy}%`;
 
-    // Change color based on energy level
     if (clampedEnergy < 20) {
       energyFill.style.backgroundColor = '#ff4444';
     } else if (clampedEnergy < 50) {
@@ -584,9 +802,6 @@ class Game {
     }
   }
 
-  /**
-   * Updates the HUD with current game state
-   */
   updateHUD() {
     if (!this.gameState || !this.localPlayer) return;
 
@@ -613,9 +828,6 @@ class Game {
     }
   }
 
-  /**
-   * Shows game end screen with winner announcement
-   */
   showGameEnd() {
     if (!this.gameState || !this.gameState.scores) return;
 
@@ -624,15 +836,16 @@ class Game {
     window.location.reload();
   }
 
+  // =========================================================================
+  // INPUT
+  // =========================================================================
+
   onWindowResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
-  /**
-   * Handles keyboard key press events
-   */
   onKeyDown(event) {
     switch (event.key.toLowerCase()) {
       case 'w': this.controls.forward = true; break;
@@ -642,7 +855,7 @@ class Game {
       case 'shift': this.controls.boost = true; break;
       case ' ':
         this.controls.shooting = true;
-        event.preventDefault(); // Prevent page scroll
+        event.preventDefault();
         break;
       case 'q':
       case 'arrowleft':
@@ -657,9 +870,6 @@ class Game {
     }
   }
 
-  /**
-   * Handles keyboard key release events
-   */
   onKeyUp(event) {
     switch (event.key.toLowerCase()) {
       case 'w': this.controls.forward = false; break;
@@ -684,10 +894,12 @@ class Game {
     }
   }
 
+  // =========================================================================
+  // GAME LOOP
+  // =========================================================================
 
   /**
-   * Updates local player position, rotation, energy, and camera
-   * @param {number} delta - Time elapsed since last frame
+   * Updates local player position, rotation, energy, camera, and terrain
    */
   updatePlayer(delta) {
     if (!this.localPlayer || !this.players.has(this.localPlayer.id)) return;
@@ -705,15 +917,13 @@ class Game {
       speed = GAME_CONFIG.BOOST_SPEED;
       this.localPlayer.energy = Math.max(0, this.localPlayer.energy - (GAME_CONFIG.ENERGY_DRAIN_RATE * delta));
     } else {
-      // Regenerate energy when not boosting
       this.localPlayer.energy = Math.min(100, this.localPlayer.energy + (GAME_CONFIG.ENERGY_REGEN_RATE * delta));
     }
 
-    // Update energy bar
     this.updateEnergyBar(this.localPlayer.energy);
 
-    // Handle rotation (Q/E or Arrow keys)
-    const rotationSpeed = 3; // radians per second
+    // Rotation
+    const rotationSpeed = 3;
     if (this.controls.rotateLeft) {
       this.shipRotation += rotationSpeed * delta;
     }
@@ -721,10 +931,9 @@ class Game {
       this.shipRotation -= rotationSpeed * delta;
     }
 
-    // Apply rotation to ship
     ship.rotation.y = this.shipRotation;
 
-    // Calculate movement in the direction the ship is facing
+    // Movement in the direction the ship is facing
     const movement = new THREE.Vector3();
 
     if (this.controls.forward) {
@@ -746,11 +955,24 @@ class Game {
 
     ship.position.add(movement);
 
-    // Keep player within bounds
-    ship.position.x = Math.max(GAME_CONFIG.ARENA_BOUNDS_MIN, Math.min(GAME_CONFIG.ARENA_BOUNDS_MAX, ship.position.x));
-    ship.position.z = Math.max(GAME_CONFIG.ARENA_BOUNDS_MIN, Math.min(GAME_CONFIG.ARENA_BOUNDS_MAX, ship.position.z));
+    // NO BOUNDS - infinite world!
 
-    // Update server if connected
+    // Move ground plane with player so it's always underfoot
+    if (this.groundPlane) {
+      this.groundPlane.position.x = ship.position.x;
+      this.groundPlane.position.z = ship.position.z;
+    }
+
+    // Move cloud group with player
+    if (this.cloudGroup) {
+      this.cloudGroup.position.x = ship.position.x;
+      this.cloudGroup.position.z = ship.position.z;
+    }
+
+    // Update terrain chunks around player
+    this.updateChunks(ship.position.x, ship.position.z);
+
+    // Send position to server
     if (this.socket && this.isConnected && this.gameState) {
       try {
         this.socket.emit('position', {
@@ -764,49 +986,84 @@ class Game {
       }
     }
 
-    // Animate propeller
-    if (ship.userData.propeller) {
-      ship.userData.propeller.rotation.z += 0.5; // Spinning propeller
+    // Animate afterburners (pulse effect)
+    const abScale = 0.8 + Math.sin(this.animationTime * 15) * 0.3;
+    const isBoosting = this.controls.boost && this.localPlayer.energy > 0;
+    const abTargetScale = isBoosting ? abScale * 1.6 : abScale;
+
+    if (ship.userData.leftAB) {
+      ship.userData.leftAB.scale.setScalar(abTargetScale);
+      ship.userData.rightAB.scale.setScalar(abTargetScale);
+    }
+    if (ship.userData.abMat) {
+      ship.userData.abMat.emissiveIntensity = isBoosting ? 3.0 : 1.5;
     }
 
-    // Update camera to follow player from above and behind
+    // Blink nav lights
+    if (ship.userData.navLights) {
+      const blinkIntensity = 0.8 + Math.sin(this.animationTime * 5) * 0.7;
+      ship.userData.navLights.forEach(light => {
+        light.material.emissiveIntensity = blinkIntensity;
+      });
+    }
+
+    // Camera follow from above and behind
     this.camera.position.x = ship.position.x;
-    this.camera.position.y = ship.position.y + 40; // Higher for aerial view
+    this.camera.position.y = ship.position.y + 40;
     this.camera.position.z = ship.position.z + 35;
     this.camera.lookAt(ship.position);
   }
 
   /**
-   * Main game loop - updates game state and renders scene
+   * Main game loop
    */
   animate() {
     requestAnimationFrame(this.animate.bind(this));
 
     const delta = this.clock.getDelta();
+    this.animationTime += delta;
 
     if (this.localPlayer) {
       this.updatePlayer(delta);
 
-      // Update projectiles
+      // Update projectiles - despawn based on distance from player
+      const playerShip = this.players.get(this.localPlayer.id);
       this.projectiles.forEach((projectile, id) => {
         if (projectile.velocity) {
           projectile.position.add(projectile.velocity.clone().multiplyScalar(delta));
 
-          // Remove projectiles that are out of bounds
-          if (
-            Math.abs(projectile.position.x) > GAME_CONFIG.PROJECTILE_BOUNDS ||
-            Math.abs(projectile.position.z) > GAME_CONFIG.PROJECTILE_BOUNDS
-          ) {
-            this.scene.remove(projectile);
-            this.projectiles.delete(id);
+          // Remove projectiles too far from the player
+          if (playerShip) {
+            const dist = projectile.position.distanceTo(playerShip.position);
+            if (dist > GAME_CONFIG.PROJECTILE_DESPAWN_DIST) {
+              this.scene.remove(projectile);
+              this.projectiles.delete(id);
+            }
           }
         }
       });
     }
+
+    // Animate other players' afterburners and nav lights too
+    this.players.forEach((ship, id) => {
+      if (id !== this.localPlayer?.id) {
+        if (ship.userData.leftAB) {
+          const s = 0.8 + Math.sin(this.animationTime * 15 + id.length) * 0.3;
+          ship.userData.leftAB.scale.setScalar(s);
+          ship.userData.rightAB.scale.setScalar(s);
+        }
+        if (ship.userData.navLights) {
+          const b = 0.8 + Math.sin(this.animationTime * 5 + id.length * 0.5) * 0.7;
+          ship.userData.navLights.forEach(light => {
+            light.material.emissiveIntensity = b;
+          });
+        }
+      }
+    });
 
     this.renderer.render(this.scene, this.camera);
   }
 }
 
 // Start the game
-new Game(); 
+new Game();

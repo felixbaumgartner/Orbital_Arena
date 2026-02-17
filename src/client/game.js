@@ -17,6 +17,11 @@ const GAME_CONFIG = {
 
   PROJECTILE_DESPAWN_DIST: 250,
 
+  FLIGHT_HEIGHT: 15,
+  PLANE_COLLISION_RADIUS: 4,
+  CRASH_DURATION: 3000,
+  CRASH_HEALTH_PENALTY: 30,
+
   MOVEMENT_SPEED: 50,
   BOOST_SPEED: 100,
   ENERGY_DRAIN_RATE: 20,
@@ -83,9 +88,14 @@ class Game {
 
     // Infinite terrain
     this.chunks = new Map();
+    this.obstacles = new Map(); // chunk key -> [{x, z, radius, topY}]
     this.groundPlane = null;
     this.cloudGroup = null;
     this.animationTime = 0;
+
+    // Crash state
+    this.crashed = false;
+    this.crashTimer = 0;
 
     this.init();
   }
@@ -295,6 +305,7 @@ class Game {
           });
         });
         this.chunks.delete(key);
+        this.obstacles.delete(key);
       }
     }
 
@@ -312,6 +323,7 @@ class Game {
    */
   generateChunk(chunkX, chunkZ) {
     const objects = [];
+    const colliders = [];
     const baseX = chunkX * GAME_CONFIG.CHUNK_SIZE;
     const baseZ = chunkZ * GAME_CONFIG.CHUNK_SIZE;
     const seed = chunkX * 73856093 + chunkZ * 19349663;
@@ -343,6 +355,9 @@ class Game {
       roof.rotation.y = Math.PI / 4;
       this.scene.add(roof);
       objects.push(roof);
+
+      // Collision: use larger dimension as radius for circular approximation
+      colliders.push({ x, z, radius: Math.max(w, d) / 2, topY: h + h * 0.4 });
     }
 
     // Trees (5-10 per chunk)
@@ -367,6 +382,9 @@ class Game {
       foliage.position.set(x, 12 * scale, z);
       this.scene.add(foliage);
       objects.push(foliage);
+
+      // Collision: tree canopy
+      colliders.push({ x, z, radius: 6 * scale, topY: (12 + 6) * scale });
     }
 
     // Occasional windmill (Dutch theme)
@@ -401,9 +419,13 @@ class Game {
       bladesGroup.position.set(wx, 25, wz - 4.5);
       this.scene.add(bladesGroup);
       objects.push(bladesGroup);
+
+      // Collision: windmill tower + blades
+      colliders.push({ x: wx, z: wz, radius: 8, topY: 32 });
     }
 
     this.chunks.set(`${chunkX},${chunkZ}`, objects);
+    this.obstacles.set(`${chunkX},${chunkZ}`, colliders);
   }
 
   /**
@@ -675,6 +697,7 @@ class Game {
         const myColor = this.getPlayerColor(data.player.id);
         const ship = this.createPlayerShip(myColor);
         ship.position.copy(this.localPlayer.position);
+        ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
         this.scene.add(ship);
         this.players.set(this.localPlayer.id, ship);
 
@@ -903,6 +926,7 @@ class Game {
    */
   updatePlayer(delta) {
     if (!this.localPlayer || !this.players.has(this.localPlayer.id)) return;
+    if (this.crashed) return;
 
     const ship = this.players.get(this.localPlayer.id);
 
@@ -954,6 +978,9 @@ class Game {
     }
 
     ship.position.add(movement);
+
+    // Keep plane at flight height
+    ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
 
     // NO BOUNDS - infinite world!
 
@@ -1007,11 +1034,70 @@ class Game {
       });
     }
 
-    // Camera follow from above and behind
-    this.camera.position.x = ship.position.x;
-    this.camera.position.y = ship.position.y + 40;
-    this.camera.position.z = ship.position.z + 35;
+    // Collision detection
+    this.checkCollisions(ship);
+
+    // Third-person camera: above and slightly behind the plane
+    const camBehind = 14;
+    const camUp = 8;
+    this.camera.position.x = ship.position.x + Math.sin(this.shipRotation) * camBehind;
+    this.camera.position.y = ship.position.y + camUp;
+    this.camera.position.z = ship.position.z + Math.cos(this.shipRotation) * camBehind;
     this.camera.lookAt(ship.position);
+  }
+
+  /**
+   * Checks plane collision against nearby obstacles
+   */
+  checkCollisions(ship) {
+    if (this.crashed) return;
+
+    const px = ship.position.x;
+    const py = ship.position.y;
+    const pz = ship.position.z;
+    const pr = GAME_CONFIG.PLANE_COLLISION_RADIUS;
+
+    for (const [, colliders] of this.obstacles) {
+      for (const obs of colliders) {
+        // Skip if plane is above the obstacle
+        if (py > obs.topY) continue;
+
+        // XZ distance check
+        const dx = px - obs.x;
+        const dz = pz - obs.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+
+        if (dist < obs.radius + pr) {
+          this.triggerCrash(ship);
+          return;
+        }
+      }
+    }
+  }
+
+  /**
+   * Triggers a crash: freezes the plane, shows crash UI, then respawns
+   */
+  triggerCrash(ship) {
+    this.crashed = true;
+
+    // Show crash overlay
+    const overlay = document.getElementById('crash-overlay');
+    if (overlay) overlay.style.display = 'flex';
+
+    // Deduct health
+    this.updateHealth(GAME_CONFIG.CRASH_HEALTH_PENALTY);
+
+    // Respawn after delay
+    setTimeout(() => {
+      this.crashed = false;
+      if (overlay) overlay.style.display = 'none';
+
+      // Move plane to a safe position (up and away from obstacles)
+      ship.position.x += (Math.random() - 0.5) * 60;
+      ship.position.z += (Math.random() - 0.5) * 60;
+      ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
+    }, GAME_CONFIG.CRASH_DURATION);
   }
 
   /**

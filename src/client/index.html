@@ -313,6 +313,33 @@
             outline: 2px solid #4CAF50;
             outline-offset: 2px;
         }
+
+        #crash-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 0, 0, 0.4);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        #crash-overlay .crash-text {
+            font-size: 4rem;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 20px #ff0000, 0 0 40px #ff0000;
+            animation: crashPulse 0.5s ease-in-out infinite alternate;
+        }
+
+        @keyframes crashPulse {
+            from { transform: scale(1); opacity: 1; }
+            to { transform: scale(1.1); opacity: 0.7; }
+        }
     </style>
 </head>
 <body>
@@ -403,6 +430,10 @@
             <div id="chat-messages"></div>
             <input type="text" id="chat-input" placeholder="Press Enter to chat">
         </div>
+    </div>
+
+    <div id="crash-overlay">
+        <div class="crash-text">CRASHED!</div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>

@@ -17,10 +17,12 @@ const GAME_CONFIG = {
 
   PROJECTILE_DESPAWN_DIST: 250,
 
-  FLIGHT_HEIGHT: 15,
+  FLIGHT_HEIGHT: 30,
   PLANE_COLLISION_RADIUS: 4,
   CRASH_DURATION: 3000,
   CRASH_HEALTH_PENALTY: 30,
+  PROJECTILE_SPEED: 120,
+  FIRE_COOLDOWN: 0.25, // seconds between shots
 
   MOVEMENT_SPEED: 50,
   BOOST_SPEED: 100,
@@ -96,6 +98,9 @@ class Game {
     // Crash state
     this.crashed = false;
     this.crashTimer = 0;
+
+    // Shooting
+    this.lastFireTime = 0;
 
     this.init();
   }
@@ -647,6 +652,42 @@ class Game {
     return new THREE.Mesh(geometry, material);
   }
 
+  /**
+   * Fires a projectile from the plane in the direction it's facing
+   */
+  fireProjectile(ship) {
+    const projectile = this.createProjectile();
+
+    // Spawn slightly ahead of the nose
+    const spawnDist = 8;
+    projectile.position.set(
+      ship.position.x - Math.sin(this.shipRotation) * spawnDist,
+      ship.position.y,
+      ship.position.z - Math.cos(this.shipRotation) * spawnDist
+    );
+
+    // Velocity in the forward direction
+    projectile.velocity = new THREE.Vector3(
+      -Math.sin(this.shipRotation) * GAME_CONFIG.PROJECTILE_SPEED,
+      0,
+      -Math.cos(this.shipRotation) * GAME_CONFIG.PROJECTILE_SPEED
+    );
+
+    const projectileId = `${this.localPlayer.id}_${Date.now()}`;
+    this.scene.add(projectile);
+    this.projectiles.set(projectileId, projectile);
+
+    // Notify server
+    if (this.socket && this.isConnected) {
+      this.socket.emit('fireProjectile', {
+        gameId: this.gameState?.id,
+        position: projectile.position,
+        direction: { x: -Math.sin(this.shipRotation), y: 0, z: -Math.cos(this.shipRotation) },
+        projectileId,
+      });
+    }
+  }
+
   // =========================================================================
   // NETWORKING
   // =========================================================================
@@ -723,8 +764,15 @@ class Game {
           const playerColor = this.getPlayerColor(player.id);
           const ship = this.createPlayerShip(playerColor);
           ship.position.copy(player.position);
+          ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
           this.scene.add(ship);
           this.players.set(player.id, ship);
+
+          // Add to gameState players list for HUD
+          if (this.gameState && this.gameState.players) {
+            this.gameState.players.push(player);
+          }
+          this.updateHUD();
         }
       });
 
@@ -734,6 +782,12 @@ class Game {
           this.scene.remove(ship);
           this.players.delete(playerId);
         }
+
+        // Remove from gameState players list
+        if (this.gameState && this.gameState.players) {
+          this.gameState.players = this.gameState.players.filter(p => p.id !== playerId);
+        }
+        this.updateHUD();
       });
 
       this.socket.on('playerMoved', (data) => {
@@ -743,6 +797,20 @@ class Game {
             ship.position.copy(data.position);
             ship.rotation.copy(data.rotation);
           }
+        }
+      });
+
+      this.socket.on('projectileFired', (data) => {
+        if (data && data.position && data.direction) {
+          const projectile = this.createProjectile();
+          projectile.position.copy(data.position);
+          projectile.velocity = new THREE.Vector3(
+            data.direction.x * GAME_CONFIG.PROJECTILE_SPEED,
+            (data.direction.y || 0) * GAME_CONFIG.PROJECTILE_SPEED,
+            data.direction.z * GAME_CONFIG.PROJECTILE_SPEED
+          );
+          this.scene.add(projectile);
+          this.projectiles.set(data.projectileId, projectile);
         }
       });
 
@@ -831,23 +899,28 @@ class Game {
     const killsEl = document.getElementById('kills');
     const deathsEl = document.getElementById('deaths');
     const assistsEl = document.getElementById('assists');
-    const redScoreEl = document.getElementById('red-score');
-    const blueScoreEl = document.getElementById('blue-score');
     const timeRemainingEl = document.getElementById('time-remaining');
+    const playerListEl = document.getElementById('player-list');
 
     if (killsEl) killsEl.textContent = this.localPlayer.kills || 0;
     if (deathsEl) deathsEl.textContent = this.localPlayer.deaths || 0;
     if (assistsEl) assistsEl.textContent = this.localPlayer.assists || 0;
 
-    if (this.gameState.scores) {
-      if (redScoreEl) redScoreEl.textContent = this.gameState.scores.red || 0;
-      if (blueScoreEl) blueScoreEl.textContent = this.gameState.scores.blue || 0;
-    }
-
     if (timeRemainingEl && typeof this.gameState.timeRemaining === 'number') {
       const minutes = Math.floor(this.gameState.timeRemaining / 60000);
       const seconds = Math.floor((this.gameState.timeRemaining % 60000) / 1000);
       timeRemainingEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    }
+
+    // Show player list with their colors
+    if (playerListEl && this.gameState.players) {
+      playerListEl.innerHTML = this.gameState.players.map(p => {
+        const color = this.getPlayerColor(p.id);
+        const hex = '#' + color.toString(16).padStart(6, '0');
+        const isYou = p.id === this.localPlayer.id ? ' (You)' : '';
+        const name = this.sanitizeInput(p.username || 'Pilot');
+        return `<div style="color:${hex}; margin: 2px 0;">&#9992; ${name}${isYou} - K:${p.kills || 0} D:${p.deaths || 0}</div>`;
+      }).join('');
     }
   }
 
@@ -998,6 +1071,12 @@ class Game {
 
     // Update terrain chunks around player
     this.updateChunks(ship.position.x, ship.position.z);
+
+    // Shooting
+    if (this.controls.shooting && this.animationTime - this.lastFireTime > GAME_CONFIG.FIRE_COOLDOWN) {
+      this.lastFireTime = this.animationTime;
+      this.fireProjectile(ship);
+    }
 
     // Send position to server
     if (this.socket && this.isConnected && this.gameState) {

@@ -26,7 +26,22 @@ const GAME_CONFIG = {
   DEFAULT_DAMAGE: 10,
   MAX_HEALTH: 100,
   MAX_ENERGY: 100,
+
+  // Windmill capture
+  CAPTURE_RADIUS: 50,
+  CAPTURE_RATE: 0.2, // progress per second (1.0 = captured)
+  CAPTURE_DECAY: 0.1,
+  WINDMILL_SCORE_INTERVAL: 5000, // ms between score ticks
+  WINDMILL_TICK_INTERVAL: 500,   // ms between capture ticks
 };
+
+const CAPTURE_WINDMILLS = [
+  { id: 'mill_n', x: 0, z: -300, name: 'North' },
+  { id: 'mill_s', x: 0, z: 300, name: 'South' },
+  { id: 'mill_e', x: 300, z: 0, name: 'East' },
+  { id: 'mill_w', x: -300, z: 0, name: 'West' },
+  { id: 'mill_c', x: 200, z: -200, name: 'Hill' },
+];
 
 // Debug logs for static file serving
 console.log('Current working directory:', process.cwd());
@@ -115,6 +130,20 @@ class Game {
     };
     this.startTime = Date.now();
     this.status = 'waiting'; // waiting, playing, ended
+
+    // Windmill capture state
+    this.windmills = CAPTURE_WINDMILLS.map(w => ({
+      id: w.id, x: w.x, z: w.z, name: w.name,
+      team: null,
+      progress: 0,
+      contestingTeam: null,
+    }));
+
+    // Windmill capture tick
+    this.windmillTickInterval = setInterval(() => this.tickWindmills(), GAME_CONFIG.WINDMILL_TICK_INTERVAL);
+
+    // Windmill scoring tick
+    this.windmillScoreInterval = setInterval(() => this.tickWindmillScores(), GAME_CONFIG.WINDMILL_SCORE_INTERVAL);
   }
 
   /**
@@ -261,6 +290,106 @@ class Game {
   }
 
   /**
+   * Processes windmill capture logic each tick
+   */
+  tickWindmills() {
+    if (this.players.size === 0) return;
+
+    let changed = false;
+    const tickSeconds = GAME_CONFIG.WINDMILL_TICK_INTERVAL / 1000;
+
+    for (const mill of this.windmills) {
+      const nearbyTeams = { red: 0, blue: 0 };
+
+      for (const [, player] of this.players) {
+        const dx = player.position.x - mill.x;
+        const dz = player.position.z - mill.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist <= GAME_CONFIG.CAPTURE_RADIUS) {
+          nearbyTeams[player.team]++;
+        }
+      }
+
+      const redNear = nearbyTeams.red > 0;
+      const blueNear = nearbyTeams.blue > 0;
+
+      if (redNear && blueNear) {
+        // Contested — no progress change
+        continue;
+      }
+
+      const capturingTeam = redNear ? 'red' : blueNear ? 'blue' : null;
+
+      if (!capturingTeam) {
+        // No one near — slowly decay uncaptured progress
+        if (mill.team === null && mill.progress > 0) {
+          mill.progress = Math.max(0, mill.progress - GAME_CONFIG.CAPTURE_DECAY * tickSeconds);
+          if (mill.progress === 0) mill.contestingTeam = null;
+          changed = true;
+        }
+        continue;
+      }
+
+      if (mill.team === capturingTeam) continue; // Already own it
+
+      if (mill.contestingTeam !== capturingTeam) {
+        // New team is contesting, reset progress
+        mill.contestingTeam = capturingTeam;
+        mill.progress = 0;
+        changed = true;
+      }
+
+      mill.progress = Math.min(1, mill.progress + GAME_CONFIG.CAPTURE_RATE * tickSeconds);
+      changed = true;
+
+      if (mill.progress >= 1) {
+        mill.team = capturingTeam;
+        mill.progress = 1;
+        console.log(`Windmill ${mill.name} captured by team ${capturingTeam} in game ${this.id}`);
+      }
+    }
+
+    if (changed) {
+      this.broadcastWindmillState();
+    }
+  }
+
+  /**
+   * Awards score points for owned windmills
+   */
+  tickWindmillScores() {
+    if (this.players.size === 0) return;
+
+    let scored = false;
+    for (const mill of this.windmills) {
+      if (mill.team) {
+        this.scores[mill.team]++;
+        scored = true;
+      }
+    }
+
+    if (scored) {
+      // Broadcast updated scores
+      io.to(this.id).emit('windmillScore', { scores: this.scores });
+    }
+  }
+
+  /**
+   * Broadcasts windmill state to all players in the game
+   */
+  broadcastWindmillState() {
+    io.to(this.id).emit('windmillUpdate', { windmills: this.windmills });
+  }
+
+  /**
+   * Cleans up intervals when game is destroyed
+   */
+  destroy() {
+    if (this.windmillTickInterval) clearInterval(this.windmillTickInterval);
+    if (this.windmillScoreInterval) clearInterval(this.windmillScoreInterval);
+  }
+
+  /**
    * Checks if the match has ended
    * @returns {boolean} Whether the match duration has been exceeded
    */
@@ -279,6 +408,7 @@ class Game {
       scores: this.scores,
       timeRemaining: Math.max(0, GAME_CONFIG.MATCH_DURATION - (Date.now() - this.startTime)),
       status: this.status,
+      windmills: this.windmills,
     };
   }
 }
@@ -351,7 +481,8 @@ io.on('connection', (socket) => {
           id: game.id,
           players: Array.from(game.players.values()),
           scores: game.scores,
-          timeRemaining: GAME_CONFIG.MATCH_DURATION - (Date.now() - game.startTime)
+          timeRemaining: GAME_CONFIG.MATCH_DURATION - (Date.now() - game.startTime),
+          windmills: game.windmills,
         }
       });
 
@@ -529,6 +660,7 @@ io.on('connection', (socket) => {
 
         // Remove game if empty
         if (game.players.size === 0) {
+          game.destroy();
           games.delete(game.id);
           console.log(`Game ${game.id} removed due to no players`);
         }
@@ -555,6 +687,7 @@ setInterval(() => {
   let cleanedGames = 0;
   for (const [id, game] of games) {
     if (game.isEnded() || game.players.size === 0) {
+      game.destroy();
       games.delete(id);
       cleanedGames++;
     }

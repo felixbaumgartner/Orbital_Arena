@@ -314,6 +314,76 @@
             outline-offset: 2px;
         }
 
+        /* Weather indicator */
+        #weather-indicator {
+            position: fixed;
+            top: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.5);
+            padding: 0.3rem 1rem;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            color: #ddd;
+            letter-spacing: 0.05rem;
+        }
+
+        /* Windmill status dots */
+        #windmill-panel {
+            position: fixed;
+            top: 2.8rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.5);
+            padding: 0.3rem 0.8rem;
+            border-radius: 12px;
+            font-size: 1rem;
+            text-align: center;
+        }
+
+        #windmill-panel .panel-label {
+            font-size: 0.65rem;
+            color: #aaa;
+            text-transform: uppercase;
+            letter-spacing: 0.08rem;
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        /* Capture progress bar */
+        #capture-progress {
+            position: fixed;
+            bottom: 6rem;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            display: none;
+            text-align: center;
+        }
+
+        #capture-label {
+            font-size: 0.8rem;
+            color: #fff;
+            margin-bottom: 4px;
+            text-shadow: 0 0 6px rgba(0,0,0,0.8);
+        }
+
+        .capture-bar {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        #capture-fill {
+            height: 100%;
+            width: 0%;
+            background: #ffffff;
+            border-radius: 4px;
+            transition: width 0.3s, background-color 0.3s;
+        }
+
         #crash-overlay {
             position: fixed;
             top: 0;
@@ -435,6 +505,20 @@
             </div>
 
             <div class="crosshair"></div>
+
+            <div id="weather-indicator">Clear</div>
+
+            <div id="windmill-panel">
+                <span class="panel-label">Windmills</span>
+                <span id="windmill-status"></span>
+            </div>
+
+            <div id="capture-progress">
+                <div id="capture-label"></div>
+                <div class="capture-bar">
+                    <div id="capture-fill"></div>
+                </div>
+            </div>
         </div>
 
         <div id="tutorial">

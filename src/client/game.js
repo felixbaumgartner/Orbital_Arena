@@ -24,6 +24,22 @@ const GAME_CONFIG = {
   PROJECTILE_SPEED: 120,
   FIRE_COOLDOWN: 0.25,
 
+  // Contrails & Smoke
+  TRAIL_MAX_POINTS: 80,
+  SMOKE_HEALTH_THRESHOLD: 50,
+  FIRE_HEALTH_THRESHOLD: 25,
+  SMOKE_SPAWN_RATE: 0.08,
+
+  // Weather
+  WEATHER_HOLD_MIN: 40,
+  WEATHER_HOLD_MAX: 70,
+  WEATHER_TRANSITION_DURATION: 10,
+  RAIN_COUNT: 4000,
+
+  // Windmill Capture
+  CAPTURE_RADIUS: 50,
+  CAPTURE_RING_RADIUS: 8,
+
   // Takeoff
   TAKEOFF_ACCEL_DURATION: 2.0,
   TAKEOFF_LIFTOFF_DURATION: 1.5,
@@ -51,6 +67,14 @@ const PLAYER_COLORS = [
   0xFF3E3E, 0x3EA8FF, 0xFF9F1C, 0x2ECC71,
   0x9B59B6, 0xF1C40F, 0x1ABC9C, 0xE91E9C,
   0x00D4FF, 0xFF6B6B, 0x45B7D1, 0xFFA07A,
+];
+
+const CAPTURE_WINDMILLS = [
+  { id: 'mill_n', x: 0, z: -300, name: 'North' },
+  { id: 'mill_s', x: 0, z: 300, name: 'South' },
+  { id: 'mill_e', x: 300, z: 0, name: 'East' },
+  { id: 'mill_w', x: -300, z: 0, name: 'West' },
+  { id: 'mill_c', x: 200, z: -200, name: 'Hill' },
 ];
 
 class Game {
@@ -97,6 +121,21 @@ class Game {
     this.takeoffSpeed = 0;
     this.controlsEnabled = false;
 
+    // Contrails & smoke
+    this.trails = new Map();
+    this.smokeParticles = [];
+    this.smokeTimer = 0;
+    this.playerHealth = 100;
+
+    // Weather
+    this.weatherState = null;
+    this.rainMesh = null;
+    this.rainVelocities = null;
+
+    // Windmill capture
+    this.captureWindmills = new Map();
+    this.windmillStates = {};
+
     this.init();
   }
 
@@ -123,6 +162,8 @@ class Game {
 
     this.createInfiniteTerrain();
     this.createRunway();
+    this.initWeather();
+    this.createCaptureWindmills();
 
     window.addEventListener('resize', this.onWindowResize.bind(this));
     document.addEventListener('keydown', this.onKeyDown.bind(this));
@@ -694,6 +735,373 @@ class Game {
   }
 
   // =========================================================================
+  // CONTRAILS & SMOKE TRAILS
+  // =========================================================================
+
+  createTrail(playerId) {
+    const maxPoints = GAME_CONFIG.TRAIL_MAX_POINTS;
+    const posArray = new Float32Array(maxPoints * 3);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+    geo.setDrawRange(0, 0);
+
+    const mat = new THREE.LineBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.3,
+    });
+
+    const line = new THREE.Line(geo, mat);
+    this.scene.add(line);
+    this.trails.set(playerId, { line, points: [], maxPoints });
+  }
+
+  updateTrail(playerId, position) {
+    const trail = this.trails.get(playerId);
+    if (!trail) return;
+
+    trail.points.push(position.clone());
+    if (trail.points.length > trail.maxPoints) trail.points.shift();
+
+    const arr = trail.line.geometry.attributes.position.array;
+    for (let i = 0; i < trail.points.length; i++) {
+      arr[i * 3] = trail.points[i].x;
+      arr[i * 3 + 1] = trail.points[i].y;
+      arr[i * 3 + 2] = trail.points[i].z;
+    }
+    trail.line.geometry.attributes.position.needsUpdate = true;
+    trail.line.geometry.setDrawRange(0, trail.points.length);
+  }
+
+  removeTrail(playerId) {
+    const trail = this.trails.get(playerId);
+    if (trail) {
+      this.scene.remove(trail.line);
+      trail.line.geometry.dispose();
+      trail.line.material.dispose();
+      this.trails.delete(playerId);
+    }
+  }
+
+  spawnSmokeParticle(position, isFire) {
+    const size = 0.3 + Math.random() * 0.5;
+    const geo = new THREE.SphereGeometry(size, 4, 4);
+    const color = isFire ? (Math.random() > 0.5 ? 0xFF4400 : 0xFF8800) : 0x555555;
+    const mat = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: isFire ? 0.8 : 0.6,
+    });
+    const p = new THREE.Mesh(geo, mat);
+    p.position.copy(position);
+    p.position.x += (Math.random() - 0.5) * 2;
+    p.position.z += (Math.random() - 0.5) * 2;
+    p.userData.vel = new THREE.Vector3(
+      (Math.random() - 0.5) * 3, 1 + Math.random() * 2, (Math.random() - 0.5) * 3
+    );
+    p.userData.life = 1.0 + Math.random() * 0.5;
+    p.userData.maxLife = p.userData.life;
+    this.scene.add(p);
+    this.smokeParticles.push(p);
+  }
+
+  updateSmokeParticles(delta) {
+    for (let i = this.smokeParticles.length - 1; i >= 0; i--) {
+      const p = this.smokeParticles[i];
+      p.userData.life -= delta;
+      if (p.userData.life <= 0) {
+        this.scene.remove(p);
+        p.geometry.dispose();
+        p.material.dispose();
+        this.smokeParticles.splice(i, 1);
+        continue;
+      }
+      const t = p.userData.life / p.userData.maxLife;
+      p.material.opacity = t * 0.6;
+      p.scale.setScalar(1 + (1 - t) * 2.5);
+      p.position.addScaledVector(p.userData.vel, delta);
+    }
+  }
+
+  // =========================================================================
+  // DYNAMIC WEATHER
+  // =========================================================================
+
+  initWeather() {
+    this.weatherState = {
+      current: 'clear',
+      next: null,
+      progress: 0,
+      timer: 0,
+      holdDuration: GAME_CONFIG.WEATHER_HOLD_MIN +
+        Math.random() * (GAME_CONFIG.WEATHER_HOLD_MAX - GAME_CONFIG.WEATHER_HOLD_MIN),
+      transitioning: false,
+      index: 0,
+    };
+
+    this.weatherPresets = {
+      clear:  { fogNear: 200, fogFar: 700, sky: 0x87CEEB, rain: 0 },
+      cloudy: { fogNear: 150, fogFar: 500, sky: 0x8899AA, rain: 0 },
+      rainy:  { fogNear: 80,  fogFar: 350, sky: 0x556677, rain: 1 },
+      foggy:  { fogNear: 30,  fogFar: 180, sky: 0x999999, rain: 0 },
+    };
+
+    this.weatherCycle = ['clear', 'cloudy', 'rainy', 'cloudy', 'foggy', 'cloudy'];
+
+    this.createRainSystem();
+  }
+
+  createRainSystem() {
+    const count = GAME_CONFIG.RAIN_COUNT;
+    const positions = new Float32Array(count * 3);
+    this.rainVelocities = [];
+
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * 300;
+      positions[i * 3 + 1] = Math.random() * 80;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 300;
+      this.rainVelocities.push(40 + Math.random() * 30);
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    const mat = new THREE.PointsMaterial({
+      color: 0xaabbcc, size: 0.4, transparent: true, opacity: 0,
+    });
+
+    this.rainMesh = new THREE.Points(geo, mat);
+    this.scene.add(this.rainMesh);
+  }
+
+  updateWeather(delta) {
+    const ws = this.weatherState;
+    if (!ws) return;
+    ws.timer += delta;
+
+    if (!ws.transitioning) {
+      if (ws.timer >= ws.holdDuration) {
+        ws.transitioning = true;
+        ws.timer = 0;
+        ws.index = (ws.index + 1) % this.weatherCycle.length;
+        ws.next = this.weatherCycle[ws.index];
+      }
+    } else {
+      ws.progress = Math.min(1, ws.timer / GAME_CONFIG.WEATHER_TRANSITION_DURATION);
+      const from = this.weatherPresets[ws.current];
+      const to = this.weatherPresets[ws.next];
+      const t = ws.progress;
+
+      this.scene.fog.near = from.fogNear + (to.fogNear - from.fogNear) * t;
+      this.scene.fog.far = from.fogFar + (to.fogFar - from.fogFar) * t;
+
+      const fromC = new THREE.Color(from.sky);
+      const toC = new THREE.Color(to.sky);
+      this.scene.background = fromC.clone().lerp(toC, t);
+      this.scene.fog.color.copy(this.scene.background);
+
+      this.rainMesh.material.opacity = (from.rain + (to.rain - from.rain) * t) * 0.6;
+
+      if (ws.progress >= 1) {
+        ws.current = ws.next;
+        ws.next = null;
+        ws.transitioning = false;
+        ws.progress = 0;
+        ws.timer = 0;
+        ws.holdDuration = GAME_CONFIG.WEATHER_HOLD_MIN +
+          Math.random() * (GAME_CONFIG.WEATHER_HOLD_MAX - GAME_CONFIG.WEATHER_HOLD_MIN);
+      }
+    }
+
+    // Animate rain
+    if (this.rainMesh.material.opacity > 0.01) {
+      const pos = this.rainMesh.geometry.attributes.position.array;
+      for (let i = 0; i < this.rainVelocities.length; i++) {
+        pos[i * 3 + 1] -= this.rainVelocities[i] * delta;
+        if (pos[i * 3 + 1] < 0) {
+          pos[i * 3 + 1] = 60 + Math.random() * 20;
+          pos[i * 3] = (Math.random() - 0.5) * 300;
+          pos[i * 3 + 2] = (Math.random() - 0.5) * 300;
+        }
+      }
+      this.rainMesh.geometry.attributes.position.needsUpdate = true;
+    }
+
+    // Move rain with player
+    const ship = this.localPlayer ? this.players.get(this.localPlayer.id) : null;
+    if (ship) {
+      this.rainMesh.position.x = ship.position.x;
+      this.rainMesh.position.z = ship.position.z;
+    }
+
+    // Update HUD indicator
+    const el = document.getElementById('weather-indicator');
+    if (el) {
+      const icons = { clear: 'Clear', cloudy: 'Cloudy', foggy: 'Foggy', rainy: 'Rain' };
+      el.textContent = icons[ws.current] || '';
+    }
+  }
+
+  // =========================================================================
+  // CAPTURE THE WINDMILL
+  // =========================================================================
+
+  createCaptureWindmills() {
+    for (const config of CAPTURE_WINDMILLS) {
+      const group = new THREE.Group();
+      group.position.set(config.x, 0, config.z);
+
+      // Tower
+      const towerGeo = new THREE.CylinderGeometry(3, 4, 25, 8);
+      const towerMat = new THREE.MeshStandardMaterial({ color: 0xF5F5DC, roughness: 0.6 });
+      const tower = new THREE.Mesh(towerGeo, towerMat);
+      tower.position.y = 12.5;
+      group.add(tower);
+
+      // Cap
+      const capGeo = new THREE.ConeGeometry(4, 5, 8);
+      const capMat = new THREE.MeshStandardMaterial({ color: 0x8B0000, roughness: 0.7 });
+      const cap = new THREE.Mesh(capGeo, capMat);
+      cap.position.y = 27;
+      group.add(cap);
+
+      // Blades
+      const bladesGroup = new THREE.Group();
+      for (let b = 0; b < 4; b++) {
+        const bladeGeo = new THREE.BoxGeometry(1, 12, 0.3);
+        const bladeMat = new THREE.MeshStandardMaterial({ color: 0xDEB887 });
+        const blade = new THREE.Mesh(bladeGeo, bladeMat);
+        blade.position.y = 6;
+        blade.rotation.z = (b * Math.PI) / 2;
+        bladesGroup.add(blade);
+      }
+      bladesGroup.position.set(0, 25, -4.5);
+      group.add(bladesGroup);
+
+      // Capture ring on ground
+      const ringGeo = new THREE.RingGeometry(
+        GAME_CONFIG.CAPTURE_RING_RADIUS - 0.5,
+        GAME_CONFIG.CAPTURE_RING_RADIUS, 32
+      );
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.4, side: THREE.DoubleSide,
+      });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.15;
+      group.add(ring);
+
+      // Beacon light on top
+      const beaconGeo = new THREE.SphereGeometry(1, 8, 8);
+      const beaconMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1.0,
+        transparent: true, opacity: 0.8,
+      });
+      const beacon = new THREE.Mesh(beaconGeo, beaconMat);
+      beacon.position.y = 30;
+      group.add(beacon);
+
+      this.scene.add(group);
+      this.captureWindmills.set(config.id, {
+        config, group, ring, ringMat, beacon, beaconMat,
+        bladesGroup, team: null, progress: 0,
+      });
+    }
+  }
+
+  updateCaptureWindmills(delta) {
+    const ship = this.localPlayer ? this.players.get(this.localPlayer.id) : null;
+    let nearestMill = null;
+    let nearestDist = Infinity;
+
+    for (const [id, mill] of this.captureWindmills) {
+      // Animate blades
+      mill.bladesGroup.rotation.z += delta * 0.5;
+
+      // Animate beacon
+      const pulse = 0.5 + Math.sin(this.animationTime * 3 + id.length) * 0.5;
+      mill.beacon.material.emissiveIntensity = 0.5 + pulse;
+
+      // Update ownership visuals from server state
+      const state = this.windmillStates[id];
+      if (state) {
+        mill.team = state.team;
+        mill.progress = state.progress || 0;
+
+        if (state.team === 'red') {
+          mill.ringMat.color.setHex(0xFF3333);
+          mill.ringMat.opacity = 0.6;
+          mill.beaconMat.color.setHex(0xFF3333);
+          mill.beaconMat.emissive.setHex(0xFF3333);
+        } else if (state.team === 'blue') {
+          mill.ringMat.color.setHex(0x3333FF);
+          mill.ringMat.opacity = 0.6;
+          mill.beaconMat.color.setHex(0x3333FF);
+          mill.beaconMat.emissive.setHex(0x3333FF);
+        } else {
+          mill.ringMat.color.setHex(0xffffff);
+          mill.ringMat.opacity = 0.3;
+          mill.beaconMat.color.setHex(0xffffff);
+          mill.beaconMat.emissive.setHex(0xffffff);
+        }
+      }
+
+      // Check distance to player
+      if (ship) {
+        const dx = ship.position.x - mill.config.x;
+        const dz = ship.position.z - mill.config.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < nearestDist && dist <= GAME_CONFIG.CAPTURE_RADIUS) {
+          nearestDist = dist;
+          nearestMill = mill;
+        }
+      }
+
+      // Animate ring scale pulse
+      const ringPulse = 1 + Math.sin(this.animationTime * 2) * 0.05;
+      mill.ring.scale.setScalar(ringPulse);
+    }
+
+    // Update capture progress UI
+    const captureUI = document.getElementById('capture-progress');
+    const captureLabel = document.getElementById('capture-label');
+    const captureFill = document.getElementById('capture-fill');
+
+    if (nearestMill && captureUI) {
+      captureUI.style.display = 'block';
+      if (captureLabel) captureLabel.textContent = nearestMill.config.name;
+      const serverState = this.windmillStates[nearestMill.config.id];
+      const prog = serverState ? (serverState.progress || 0) : 0;
+      if (captureFill) {
+        captureFill.style.width = `${prog * 100}%`;
+        if (serverState && serverState.team) {
+          captureFill.style.backgroundColor = serverState.team === 'red' ? '#ff4444' : '#4444ff';
+        } else if (serverState && serverState.contestingTeam) {
+          captureFill.style.backgroundColor = serverState.contestingTeam === 'red' ? '#ff4444' : '#4444ff';
+        } else {
+          captureFill.style.backgroundColor = '#ffffff';
+        }
+      }
+    } else if (captureUI) {
+      captureUI.style.display = 'none';
+    }
+
+    this.updateWindmillHUD();
+  }
+
+  updateWindmillHUD() {
+    const el = document.getElementById('windmill-status');
+    if (!el) return;
+
+    let html = '';
+    for (const config of CAPTURE_WINDMILLS) {
+      const state = this.windmillStates[config.id];
+      let color = '#888';
+      let symbol = '\u25CB';
+      if (state && state.team === 'red') { color = '#ff4444'; symbol = '\u25CF'; }
+      else if (state && state.team === 'blue') { color = '#4444ff'; symbol = '\u25CF'; }
+      html += `<span style="color:${color}; margin: 0 3px;" title="${config.name}">${symbol}</span>`;
+    }
+    el.innerHTML = html;
+  }
+
+  // =========================================================================
   // RUNWAY
   // =========================================================================
 
@@ -1083,6 +1491,8 @@ class Game {
         const ship = this.createPlayerShip(myColor);
         this.scene.add(ship);
         this.players.set(this.localPlayer.id, ship);
+        this.createTrail(data.player.id);
+        this.playerHealth = 100;
 
         // Start takeoff sequence
         this.startTakeoff(ship);
@@ -1096,8 +1506,16 @@ class Game {
               otherShip.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
               this.scene.add(otherShip);
               this.players.set(player.id, otherShip);
+              this.createTrail(player.id);
             }
           });
+        }
+
+        // Load initial windmill state
+        if (data.gameState.windmills) {
+          for (const mill of data.gameState.windmills) {
+            this.windmillStates[mill.id] = mill;
+          }
         }
 
         this.updateHUD();
@@ -1112,6 +1530,7 @@ class Game {
           ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
           this.scene.add(ship);
           this.players.set(player.id, ship);
+          this.createTrail(player.id);
           if (this.gameState && this.gameState.players) {
             this.gameState.players.push(player);
           }
@@ -1124,6 +1543,7 @@ class Game {
         if (ship) {
           this.scene.remove(ship);
           this.players.delete(playerId);
+          this.removeTrail(playerId);
         }
         if (this.gameState && this.gameState.players) {
           this.gameState.players = this.gameState.players.filter(p => p.id !== playerId);
@@ -1156,7 +1576,10 @@ class Game {
       });
 
       this.socket.on('playerHit', (data) => {
-        if (data.targetId === this.localPlayer?.id) this.updateHealth(data.damage);
+        if (data.targetId === this.localPlayer?.id) {
+          this.playerHealth = Math.max(0, this.playerHealth - data.damage);
+          this.updateHealth(data.damage);
+        }
         if (data.gameState) {
           this.gameState = data.gameState;
           this.updateHUD();
@@ -1167,6 +1590,22 @@ class Game {
       this.socket.on('gameStart', (gameState) => { this.gameState = gameState; this.updateHUD(); });
       this.socket.on('gameEnd', (gameState) => { this.gameState = gameState; this.showGameEnd(); });
       this.socket.on('error', (error) => console.error('Socket error:', error));
+
+      // Windmill capture updates from server
+      this.socket.on('windmillUpdate', (data) => {
+        if (data && data.windmills) {
+          for (const mill of data.windmills) {
+            this.windmillStates[mill.id] = mill;
+          }
+        }
+      });
+
+      this.socket.on('windmillScore', (data) => {
+        if (data && data.scores && this.gameState) {
+          this.gameState.scores = data.scores;
+          this.updateHUD();
+        }
+      });
 
     } catch (error) {
       console.error('Failed to initialize connection:', error);
@@ -1324,6 +1763,18 @@ class Game {
     ship.position.add(movement);
     ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
 
+    // Update contrail
+    this.updateTrail(this.localPlayer.id, ship.position);
+
+    // Smoke/fire when damaged
+    this.smokeTimer += delta;
+    if (this.smokeTimer > GAME_CONFIG.SMOKE_SPAWN_RATE &&
+        this.playerHealth < GAME_CONFIG.SMOKE_HEALTH_THRESHOLD) {
+      this.smokeTimer = 0;
+      const isFire = this.playerHealth < GAME_CONFIG.FIRE_HEALTH_THRESHOLD;
+      this.spawnSmokeParticle(ship.position, isFire);
+    }
+
     if (this.groundPlane) {
       this.groundPlane.position.x = ship.position.x;
       this.groundPlane.position.z = ship.position.z;
@@ -1419,6 +1870,11 @@ class Game {
     const delta = this.clock.getDelta();
     this.animationTime += delta;
 
+    // Global systems (always update)
+    this.updateWeather(delta);
+    this.updateSmokeParticles(delta);
+    this.updateCaptureWindmills(delta);
+
     // Takeoff sequence
     if (this.takeoffPhase) {
       this.updateTakeoff(delta);
@@ -1454,6 +1910,8 @@ class Game {
           const b = 0.8 + Math.sin(this.animationTime * 5 + id.length * 0.5) * 0.7;
           ship.userData.navLights.forEach(light => { light.material.emissiveIntensity = b; });
         }
+        // Update contrail for other players
+        this.updateTrail(id, ship.position);
       }
     });
 

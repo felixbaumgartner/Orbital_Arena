@@ -1691,6 +1691,23 @@ class Game {
   }
 
   onKeyDown(event) {
+    const chatInput = document.getElementById('chat-input');
+
+    // If chat input is focused, only handle Escape to blur
+    if (document.activeElement === chatInput) {
+      if (event.key === 'Escape') {
+        chatInput.blur();
+      }
+      return;
+    }
+
+    // Focus chat input on Enter
+    if (event.key === 'Enter' && chatInput) {
+      chatInput.focus();
+      event.preventDefault();
+      return;
+    }
+
     switch (event.key.toLowerCase()) {
       case 'w': this.controls.forward = true; break;
       case 's': this.controls.backward = true; break;
@@ -1704,6 +1721,9 @@ class Game {
   }
 
   onKeyUp(event) {
+    // Ignore key ups when typing in chat
+    if (document.activeElement === document.getElementById('chat-input')) return;
+
     switch (event.key.toLowerCase()) {
       case 'w': this.controls.forward = false; break;
       case 's': this.controls.backward = false; break;

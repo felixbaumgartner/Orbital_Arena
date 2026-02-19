@@ -794,8 +794,8 @@ class Game {
 
     // Place ship at start of runway, on the ground, facing down runway (negative Z)
     ship.position.set(0, 1, GAME_CONFIG.RUNWAY_LENGTH / 2 - 10);
-    ship.rotation.set(0, Math.PI, 0); // Face negative Z (down the runway)
-    this.shipRotation = Math.PI;
+    ship.rotation.set(0, 0, 0); // Face negative Z (down the runway)
+    this.shipRotation = 0;
 
     // Show takeoff overlay
     const overlay = document.getElementById('takeoff-overlay');

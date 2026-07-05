@@ -4,11 +4,17 @@ const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { attachGameServer } = require('../lib/game-server');
 
-const server = createServer();
+// Default handler for non-Socket.IO requests (also aids debugging —
+// without it the bare server would hang and 504 on plain HTTP hits).
+const server = createServer((req, res) => {
+  res.setHeader('content-type', 'application/json');
+  res.end(JSON.stringify({ ok: true, url: req.url }));
+});
 
-// Socket.IO appends /socket.io to its path, so clients connect with
-// path: '/api/socket-io/socket.io' (same as the local server in server.js).
-const io = new Server(server, { path: '/api/socket-io/socket.io' });
+// Socket.IO is mounted at exactly /api/socket-io (requests go to
+// /api/socket-io/?EIO=4...). Deeper subpaths like /api/socket-io/socket.io
+// are NOT routed to this function by Vercel, so the path must stay flat.
+const io = new Server(server, { path: '/api/socket-io' });
 
 attachGameServer(io);
 

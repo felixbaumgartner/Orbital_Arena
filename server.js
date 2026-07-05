@@ -9,7 +9,7 @@ const httpServer = createServer(app);
 
 // Same Socket.IO path as the Vercel Function (api/socket-io.js) so the
 // client connects identically in local dev and production.
-const io = new Server(httpServer, { path: '/api/socket-io/socket.io' });
+const io = new Server(httpServer, { path: '/api/socket-io' });
 
 // Debug logs for static file serving
 console.log('Current working directory:', process.cwd());

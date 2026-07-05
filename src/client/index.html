@@ -111,6 +111,33 @@
             bottom: 3.5rem;
         }
 
+        .speed-container {
+            bottom: 6rem;
+        }
+
+        .speed-bar {
+            width: 200px;
+            height: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+            background: rgba(46, 204, 113, 0.3);
+        }
+
+        .speed-fill {
+            height: 100%;
+            background: #2ecc71;
+            transition: width 0.2s, background-color 0.3s;
+        }
+
+        #radar {
+            position: fixed;
+            right: 1rem;
+            top: 10rem;
+            border-radius: 50%;
+            border: 2px solid rgba(0, 255, 100, 0.4);
+            box-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
+        }
+
         .energy-container {
             bottom: 1rem;
         }
@@ -469,12 +496,19 @@
                     <span class="key">E</span> or <span class="key">→</span> Turn Right
                 </div>
                 <div class="control-section">
+                    <strong>Speed:</strong>
+                    <span class="key">↑</span> Faster
+                    <span class="key">↓</span> Slower
+                </div>
+                <div class="control-section">
                     <strong>Combat:</strong>
                     <span class="key">Space</span> Shoot
                 </div>
                 <div class="control-section">
                     <strong>Special:</strong>
                     <span class="key">Shift</span> Boost<br>
+                    <span class="key">R</span> Barrel Roll<br>
+                    <span class="key">M</span> Mute<br>
                     <span class="key">Enter</span> Chat
                 </div>
             </div>
@@ -488,6 +522,13 @@
             <div class="team-scores">
                 <div>Time: <span id="time-remaining">5:00</span></div>
                 <div id="player-list" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
+            </div>
+
+            <div class="bar-container speed-container">
+                <div class="bar-label">Speed (<span id="speed-value">200 km/h</span>)</div>
+                <div class="speed-bar">
+                    <div class="speed-fill" style="width: 50%"></div>
+                </div>
             </div>
 
             <div class="bar-container health-container">
@@ -505,6 +546,8 @@
             </div>
 
             <div class="crosshair"></div>
+
+            <canvas id="radar" width="140" height="140"></canvas>
 
             <div id="weather-indicator">Clear</div>
 
@@ -530,9 +573,14 @@
             <p>Q or ← - Rotate Left</p>
             <p>E or → - Rotate Right</p>
             <p>Space - Shoot</p>
+            <p><strong>Speed:</strong></p>
+            <p>↑ - Speed Up | ↓ - Slow Down</p>
             <p><strong>Special:</strong></p>
             <p>Shift - Boost (drains energy)</p>
+            <p>R - Barrel Roll (dodge!)</p>
+            <p>M - Mute sound</p>
             <p>Enter - Chat</p>
+            <p><strong>Tip:</strong> Fly through glowing tulip rings for power-ups! 🌷</p>
             <p><strong>ESC or Enter to close this tutorial</strong></p>
             <button id="tutorial-close">Got it!</button>
         </div>

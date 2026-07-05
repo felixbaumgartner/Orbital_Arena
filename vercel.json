@@ -3,7 +3,7 @@
   "outputDirectory": "public",
   "functions": {
     "api/socket-io.js": {
-      "maxDuration": 300
+      "maxDuration": 60
     }
   },
   "rewrites": [

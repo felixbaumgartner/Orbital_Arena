@@ -1461,7 +1461,7 @@ class Game {
       this.socket = io({
         // Matches the Socket.IO mount path used by both the local server
         // and the Vercel Function (api/socket-io.js)
-        path: '/api/socket-io/socket.io',
+        path: '/api/socket-io',
         transports: ['websocket'],
         reconnection: true,
         reconnectionAttempts: GAME_CONFIG.RECONNECT_ATTEMPTS,

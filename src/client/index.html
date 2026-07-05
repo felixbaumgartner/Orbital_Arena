@@ -111,6 +111,24 @@
             bottom: 3.5rem;
         }
 
+        .speed-container {
+            bottom: 6rem;
+        }
+
+        .speed-bar {
+            width: 200px;
+            height: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+            background: rgba(46, 204, 113, 0.3);
+        }
+
+        .speed-fill {
+            height: 100%;
+            background: #2ecc71;
+            transition: width 0.2s, background-color 0.3s;
+        }
+
         .energy-container {
             bottom: 1rem;
         }
@@ -469,6 +487,11 @@
                     <span class="key">E</span> or <span class="key">→</span> Turn Right
                 </div>
                 <div class="control-section">
+                    <strong>Speed:</strong>
+                    <span class="key">↑</span> Faster
+                    <span class="key">↓</span> Slower
+                </div>
+                <div class="control-section">
                     <strong>Combat:</strong>
                     <span class="key">Space</span> Shoot
                 </div>
@@ -488,6 +511,13 @@
             <div class="team-scores">
                 <div>Time: <span id="time-remaining">5:00</span></div>
                 <div id="player-list" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
+            </div>
+
+            <div class="bar-container speed-container">
+                <div class="bar-label">Speed (<span id="speed-value">200 km/h</span>)</div>
+                <div class="speed-bar">
+                    <div class="speed-fill" style="width: 50%"></div>
+                </div>
             </div>
 
             <div class="bar-container health-container">
@@ -530,6 +560,8 @@
             <p>Q or ← - Rotate Left</p>
             <p>E or → - Rotate Right</p>
             <p>Space - Shoot</p>
+            <p><strong>Speed:</strong></p>
+            <p>↑ - Speed Up | ↓ - Slow Down</p>
             <p><strong>Special:</strong></p>
             <p>Shift - Boost (drains energy)</p>
             <p>Enter - Chat</p>

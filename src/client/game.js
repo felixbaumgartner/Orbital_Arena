@@ -49,6 +49,17 @@ const GAME_CONFIG = {
 
   MOVEMENT_SPEED: 50,
   BOOST_SPEED: 100,
+
+  // Turning & banking
+  TURN_RATE: 3,          // max turn rate (rad/s)
+  TURN_SMOOTHING: 6,     // how quickly turn rate ramps toward input (per second)
+  MAX_BANK_ANGLE: 0.55,  // visual roll at full turn (rad, ~31°)
+  BANK_SMOOTHING: 5,     // how quickly the roll eases toward its target
+
+  // Throttle
+  THROTTLE_MIN: 0.35,
+  THROTTLE_MAX: 1.5,
+  THROTTLE_RATE: 0.6,    // throttle change per second while held
   ENERGY_DRAIN_RATE: 20,
   ENERGY_REGEN_RATE: 10,
 
@@ -98,8 +109,11 @@ class Game {
     this.controls = {
       forward: false, backward: false, left: false, right: false,
       boost: false, shooting: false, rotateLeft: false, rotateRight: false,
+      throttleUp: false, throttleDown: false,
     };
     this.shipRotation = 0;
+    this.rotationVelocity = 0; // smoothed turn rate (rad/s)
+    this.throttle = 1.0;       // speed multiplier, THROTTLE_MIN..THROTTLE_MAX
 
     // Infinite terrain
     this.chunks = new Map();
@@ -1709,6 +1723,16 @@ class Game {
     }
   }
 
+  updateSpeedBar(speed) {
+    const speedFill = document.querySelector('.speed-fill');
+    const speedValue = document.getElementById('speed-value');
+    if (!speedFill) return;
+    const pct = Math.max(0, Math.min(100, (speed / GAME_CONFIG.BOOST_SPEED) * 100));
+    speedFill.style.width = `${pct}%`;
+    speedFill.style.backgroundColor = speed > GAME_CONFIG.MOVEMENT_SPEED ? '#ffaa00' : '#2ecc71';
+    if (speedValue) speedValue.textContent = `${Math.round(speed * 4)} km/h`;
+  }
+
   updateEnergyBar(energyPercent) {
     const energyFill = document.querySelector('.energy-fill');
     if (!energyFill) return;
@@ -1791,6 +1815,8 @@ class Game {
       case ' ': this.controls.shooting = true; event.preventDefault(); break;
       case 'q': case 'arrowleft': this.controls.rotateLeft = true; event.preventDefault(); break;
       case 'e': case 'arrowright': this.controls.rotateRight = true; event.preventDefault(); break;
+      case 'arrowup': this.controls.throttleUp = true; event.preventDefault(); break;
+      case 'arrowdown': this.controls.throttleDown = true; event.preventDefault(); break;
     }
   }
 
@@ -1807,6 +1833,8 @@ class Game {
       case ' ': this.controls.shooting = false; event.preventDefault(); break;
       case 'q': case 'arrowleft': this.controls.rotateLeft = false; event.preventDefault(); break;
       case 'e': case 'arrowright': this.controls.rotateRight = false; event.preventDefault(); break;
+      case 'arrowup': this.controls.throttleUp = false; event.preventDefault(); break;
+      case 'arrowdown': this.controls.throttleDown = false; event.preventDefault(); break;
     }
   }
 
@@ -1822,7 +1850,15 @@ class Game {
 
     if (typeof this.localPlayer.energy !== 'number') this.localPlayer.energy = 100;
 
-    let speed = GAME_CONFIG.MOVEMENT_SPEED;
+    // Throttle (↑/↓ keys)
+    if (this.controls.throttleUp) {
+      this.throttle = Math.min(GAME_CONFIG.THROTTLE_MAX, this.throttle + GAME_CONFIG.THROTTLE_RATE * delta);
+    }
+    if (this.controls.throttleDown) {
+      this.throttle = Math.max(GAME_CONFIG.THROTTLE_MIN, this.throttle - GAME_CONFIG.THROTTLE_RATE * delta);
+    }
+
+    let speed = GAME_CONFIG.MOVEMENT_SPEED * this.throttle;
     if (this.controls.boost && this.localPlayer.energy > 0) {
       speed = GAME_CONFIG.BOOST_SPEED;
       this.localPlayer.energy = Math.max(0, this.localPlayer.energy - (GAME_CONFIG.ENERGY_DRAIN_RATE * delta));
@@ -1830,11 +1866,20 @@ class Game {
       this.localPlayer.energy = Math.min(100, this.localPlayer.energy + (GAME_CONFIG.ENERGY_REGEN_RATE * delta));
     }
     this.updateEnergyBar(this.localPlayer.energy);
+    this.updateSpeedBar(speed);
 
-    const rotationSpeed = 3;
-    if (this.controls.rotateLeft) this.shipRotation += rotationSpeed * delta;
-    if (this.controls.rotateRight) this.shipRotation -= rotationSpeed * delta;
+    // Smooth turning: turn rate eases toward the input instead of snapping
+    const turnInput = (this.controls.rotateLeft ? 1 : 0) - (this.controls.rotateRight ? 1 : 0);
+    const targetTurnRate = turnInput * GAME_CONFIG.TURN_RATE;
+    const turnSmooth = Math.min(1, GAME_CONFIG.TURN_SMOOTHING * delta);
+    this.rotationVelocity += (targetTurnRate - this.rotationVelocity) * turnSmooth;
+    this.shipRotation += this.rotationVelocity * delta;
     ship.rotation.y = this.shipRotation;
+
+    // Bank into the turn (visual roll proportional to turn rate)
+    const targetBank = (this.rotationVelocity / GAME_CONFIG.TURN_RATE) * GAME_CONFIG.MAX_BANK_ANGLE;
+    const bankSmooth = Math.min(1, GAME_CONFIG.BANK_SMOOTHING * delta);
+    ship.rotation.z += (targetBank - ship.rotation.z) * bankSmooth;
 
     const movement = new THREE.Vector3();
     if (this.controls.forward) {

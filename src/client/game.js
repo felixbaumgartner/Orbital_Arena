@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { io } from 'socket.io-client';
 
 // Game constants
@@ -10,9 +11,9 @@ const GAME_CONFIG = {
   CAMERA_HEIGHT: 10,
 
   CHUNK_SIZE: 200,
-  VIEW_DISTANCE: 2,
-  FOG_NEAR: 200,
-  FOG_FAR: 700,
+  VIEW_DISTANCE: 3,
+  FOG_NEAR: 300,
+  FOG_FAR: 950,
   GROUND_SIZE: 2000,
 
   PROJECTILE_DESPAWN_DIST: 250,
@@ -132,6 +133,7 @@ class Game {
 
     // Infinite terrain
     this.chunks = new Map();
+    this.chunkLods = new Map(); // chunk key -> 'high' | 'low'
     this.obstacles = new Map();
     this.groundPlane = null;
     this.cloudGroup = null;
@@ -180,7 +182,16 @@ class Game {
     // Audio (initialized on first user gesture)
     this.audio = null;
 
+    // Ambient animated scenery (balloons, boats, lighthouse beams)
+    this.ambient = new Map(); // chunk key -> [{mesh, type, ...params}]
+    this.birdFlock = null;
+    this.birdAnchor = new THREE.Vector3();
+    this.birdAngle = 0;
+
     this.init();
+
+    // Debug handle (also used by automated QA)
+    window.__game = this;
   }
 
   init() {
@@ -205,6 +216,7 @@ class Game {
     this.scene.add(hemiLight);
 
     this.createInfiniteTerrain();
+    this.createBirdFlock();
     this.createRunway();
     this.initWeather();
     this.createCaptureWindmills();
@@ -335,40 +347,57 @@ class Game {
     const cx = Math.floor(playerX / GAME_CONFIG.CHUNK_SIZE);
     const cz = Math.floor(playerZ / GAME_CONFIG.CHUNK_SIZE);
 
-    const needed = new Set();
+    // LOD: full detail within 2 chunks, cheap far-ring silhouettes beyond
+    const needed = new Map();
     for (let dx = -GAME_CONFIG.VIEW_DISTANCE; dx <= GAME_CONFIG.VIEW_DISTANCE; dx++) {
       for (let dz = -GAME_CONFIG.VIEW_DISTANCE; dz <= GAME_CONFIG.VIEW_DISTANCE; dz++) {
-        needed.add(`${cx + dx},${cz + dz}`);
+        const ring = Math.max(Math.abs(dx), Math.abs(dz));
+        needed.set(`${cx + dx},${cz + dz}`, ring <= 2 ? 'high' : 'low');
       }
     }
 
-    for (const [key, objects] of this.chunks) {
-      if (!needed.has(key)) {
-        objects.forEach(obj => {
-          this.scene.remove(obj);
-          obj.traverse(child => {
-            if (child.geometry) child.geometry.dispose();
-            if (child.material) {
-              if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
-              else child.material.dispose();
-            }
-          });
-        });
-        this.chunks.delete(key);
-        this.obstacles.delete(key);
-        this.powerups.delete(key);
-      }
+    for (const key of this.chunks.keys()) {
+      if (!needed.has(key)) this.disposeChunk(key);
     }
 
-    for (const key of needed) {
+    for (const [key, lod] of needed) {
+      const current = this.chunkLods.get(key);
       if (!this.chunks.has(key)) {
         const [x, z] = key.split(',').map(Number);
-        this.generateChunk(x, z);
+        this.generateChunk(x, z, lod);
+      } else if (current === 'low' && lod === 'high') {
+        // Upgrade an approaching far-ring chunk to full detail
+        this.disposeChunk(key);
+        const [x, z] = key.split(',').map(Number);
+        this.generateChunk(x, z, lod);
       }
+      // Downgrades (high chunk drifting into the far ring) are left as-is;
+      // they get evicted once out of range.
     }
   }
 
-  generateChunk(chunkX, chunkZ) {
+  disposeChunk(key) {
+    const objects = this.chunks.get(key);
+    if (objects) {
+      objects.forEach(obj => {
+        this.scene.remove(obj);
+        obj.traverse(child => {
+          if (child.geometry) child.geometry.dispose();
+          if (child.material) {
+            if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+            else child.material.dispose();
+          }
+        });
+      });
+    }
+    this.chunks.delete(key);
+    this.chunkLods.delete(key);
+    this.obstacles.delete(key);
+    this.powerups.delete(key);
+    this.ambient.delete(key);
+  }
+
+  generateChunk(chunkX, chunkZ, lod = 'high') {
     const objects = [];
     const colliders = [];
     const baseX = chunkX * GAME_CONFIG.CHUNK_SIZE;
@@ -402,6 +431,10 @@ class Game {
       this.scene.add(patch);
       objects.push(patch);
     }
+
+    // Detailed scenery only for near (high-LOD) chunks; the far ring keeps
+    // just ground colors, tulip fields, balloons, and landmarks
+    if (lod === 'high') {
 
     // --- BIOME: VILLAGE ---
     if (biome === 'village') {
@@ -630,6 +663,11 @@ class Game {
         this.scene.add(pond);
         objects.push(pond);
 
+        // Rowboat on larger ponds
+        if (r > 12) {
+          this.addRowboat(x, z, r, `${chunkX},${chunkZ}`, objects, seed + i);
+        }
+
         // Reeds around pond
         for (let j = 0; j < 8; j++) {
           const angle = (j / 8) * Math.PI * 2;
@@ -662,16 +700,66 @@ class Game {
       }
     }
 
+    } // end lod === 'high' detailed scenery
+
+    const chunkKey = `${chunkX},${chunkZ}`;
+
+    // --- Striped tulip fields (farmland's signature look) ---
+    if (biome === 'farmland') {
+      const numFields = 1 + Math.floor(this.seededRandom(seed + 3000) * 2);
+      for (let i = 0; i < numFields; i++) {
+        const s = seed + 3000 + i * 77;
+        this.addTulipField(
+          baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE,
+          baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE,
+          s, objects);
+      }
+    }
+
+    // --- Grazing livestock (cows in villages, sheep in farmland) ---
+    if (lod === 'high' && biome !== 'waterland') {
+      const herd = 3 + Math.floor(this.seededRandom(seed + 5000) * 4);
+      const hx = baseX + 30 + this.seededRandom(seed + 5001) * (GAME_CONFIG.CHUNK_SIZE - 60);
+      const hz = baseZ + 30 + this.seededRandom(seed + 5002) * (GAME_CONFIG.CHUNK_SIZE - 60);
+      this.addHerd(hx, hz, herd, biome === 'village' ? 'cow' : 'sheep', seed + 5010, objects);
+    }
+
+    // --- Hot air balloons drifting overhead ---
+    if (this.seededRandom(seed + 6100) < 0.2) {
+      this.addHotAirBalloon(
+        baseX + this.seededRandom(seed + 6101) * GAME_CONFIG.CHUNK_SIZE,
+        baseZ + this.seededRandom(seed + 6102) * GAME_CONFIG.CHUNK_SIZE,
+        seed + 6103, chunkKey, objects);
+    }
+
+    // --- Rare landmarks: reasons to fly toward the horizon ---
+    const landmarkRoll = this.seededRandom(seed + 4242);
+    if (landmarkRoll < 0.025) {
+      this.addCastle(baseX + GAME_CONFIG.CHUNK_SIZE / 2, baseZ + GAME_CONFIG.CHUNK_SIZE / 2, objects, colliders);
+    } else if (landmarkRoll < 0.05) {
+      this.addLighthouse(baseX + GAME_CONFIG.CHUNK_SIZE / 2, baseZ + GAME_CONFIG.CHUNK_SIZE / 2, chunkKey, objects, colliders);
+    } else if (landmarkRoll < 0.07) {
+      // Balloon festival: a cluster of balloons at varied heights
+      for (let i = 0; i < 4; i++) {
+        const s = seed + 4300 + i * 31;
+        this.addHotAirBalloon(
+          baseX + 40 + this.seededRandom(s) * (GAME_CONFIG.CHUNK_SIZE - 80),
+          baseZ + 40 + this.seededRandom(s + 1) * (GAME_CONFIG.CHUNK_SIZE - 80),
+          s + 2, chunkKey, objects);
+      }
+    }
+
     // --- Magic tulip power-up (any biome) ---
-    if (this.seededRandom(seed + 9999) < GAME_CONFIG.PICKUP_SPAWN_CHANCE) {
+    if (lod === 'high' && this.seededRandom(seed + 9999) < GAME_CONFIG.PICKUP_SPAWN_CHANCE) {
       const px = baseX + 20 + this.seededRandom(seed + 9998) * (GAME_CONFIG.CHUNK_SIZE - 40);
       const pz = baseZ + 20 + this.seededRandom(seed + 9997) * (GAME_CONFIG.CHUNK_SIZE - 40);
       const type = this.seededRandom(seed + 9996) < 0.5 ? 'energy' : 'speed';
       this.addTulipPickup(px, pz, type, `${chunkX},${chunkZ}`, objects);
     }
 
-    this.chunks.set(`${chunkX},${chunkZ}`, objects);
-    this.obstacles.set(`${chunkX},${chunkZ}`, colliders);
+    this.chunks.set(chunkKey, objects);
+    this.chunkLods.set(chunkKey, lod);
+    this.obstacles.set(chunkKey, colliders);
   }
 
   /**
@@ -760,6 +848,341 @@ class Game {
   }
 
   // --- Reusable scenery helpers ---
+
+  registerAmbient(chunkKey, entry) {
+    if (!this.ambient.has(chunkKey)) this.ambient.set(chunkKey, []);
+    this.ambient.get(chunkKey).push(entry);
+  }
+
+  /**
+   * Merge many colored primitive parts into ONE mesh (single draw call)
+   * using vertex colors. parts: [{geo, color, x, y, z, ry?, sx?, sy?, sz?}]
+   */
+  buildMergedMesh(parts) {
+    const geos = parts.map(p => {
+      const g = p.geo;
+      if (p.sx || p.sy || p.sz) g.scale(p.sx || 1, p.sy || 1, p.sz || 1);
+      if (p.rx) g.rotateX(p.rx);
+      if (p.ry) g.rotateY(p.ry);
+      if (p.rz) g.rotateZ(p.rz);
+      g.translate(p.x || 0, p.y || 0, p.z || 0);
+      const color = new THREE.Color(p.color);
+      const count = g.attributes.position.count;
+      const colors = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        colors[i * 3] = color.r;
+        colors[i * 3 + 1] = color.g;
+        colors[i * 3 + 2] = color.b;
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      return g;
+    });
+    const merged = mergeGeometries(geos);
+    geos.forEach(g => g.dispose());
+    return new THREE.Mesh(merged, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
+  }
+
+  /**
+   * Iconic Dutch striped tulip field: parallel bands of vivid color,
+   * merged into a single mesh (one draw call)
+   */
+  addTulipField(x, z, seed, objects) {
+    const palette = [0xE8384F, 0xFFD23F, 0xFF69B4, 0x9B59B6, 0xFF8C42, 0xF8F8FF, 0xE8384F, 0xFFD23F];
+    const numStripes = 6 + Math.floor(this.seededRandom(seed + 5) * 3);
+    const stripeW = 5 + this.seededRandom(seed + 6) * 3;
+    const length = 45 + this.seededRandom(seed + 7) * 35;
+    const startColor = Math.floor(this.seededRandom(seed + 8) * palette.length);
+
+    const parts = [];
+    for (let i = 0; i < numStripes; i++) {
+      parts.push({
+        geo: new THREE.PlaneGeometry(stripeW - 0.6, length),
+        color: palette[(startColor + i) % palette.length],
+        rx: -Math.PI / 2,
+        x: (i - numStripes / 2) * stripeW,
+        y: 0.06 + i * 0.002,
+      });
+    }
+
+    const field = this.buildMergedMesh(parts);
+    field.position.set(x, 0, z);
+    field.rotation.y = this.seededRandom(seed + 9) * Math.PI;
+    this.scene.add(field);
+    objects.push(field);
+  }
+
+  /**
+   * A whole herd (cows or sheep) merged into a single mesh — one draw call
+   * regardless of herd size
+   */
+  addHerd(hx, hz, count, kind, seed, objects) {
+    const parts = [];
+    for (let i = 0; i < count; i++) {
+      const s = seed + i * 13;
+      const ax = (this.seededRandom(s + 1) - 0.5) * 35;
+      const az = (this.seededRandom(s + 2) - 0.5) * 35;
+      const ry = this.seededRandom(s + 4) * Math.PI * 2;
+
+      if (kind === 'cow') {
+        parts.push(
+          { geo: new THREE.BoxGeometry(3.2, 1.8, 1.6), color: 0xF5F5F5, x: ax, y: 1.6, z: az, ry },
+          { geo: new THREE.BoxGeometry(1.4, 1.9, 1.7), color: 0x1a1a1a,
+            x: ax + Math.cos(ry) * 0.8, y: 1.6, z: az - Math.sin(ry) * 0.8, ry },
+          { geo: new THREE.BoxGeometry(1.0, 1.0, 0.9), color: 0xF5F5F5,
+            x: ax + Math.cos(ry) * 2.0, y: 2.1, z: az - Math.sin(ry) * 2.0, ry }
+        );
+      } else {
+        parts.push(
+          { geo: new THREE.SphereGeometry(1.2, 6, 5), color: 0xFFFAF0, sx: 1.3, x: ax, y: 1.2, z: az, ry },
+          { geo: new THREE.SphereGeometry(0.5, 5, 4), color: 0x2F2F2F,
+            x: ax + Math.cos(ry) * 1.5, y: 1.4, z: az - Math.sin(ry) * 1.5 }
+        );
+      }
+    }
+
+    const herd = this.buildMergedMesh(parts);
+    herd.position.set(hx, 0, hz);
+    this.scene.add(herd);
+    objects.push(herd);
+  }
+
+  addHotAirBalloon(x, z, seed, chunkKey, objects) {
+    const colors = [0xE8384F, 0xFFD23F, 0x3EA8FF, 0x2ECC71, 0xFF8C42, 0x9B59B6];
+    const color = colors[Math.floor(this.seededRandom(seed) * colors.length)];
+    const group = new THREE.Group();
+
+    const envelope = new THREE.Mesh(
+      new THREE.SphereGeometry(7, 12, 10),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.6 })
+    );
+    envelope.scale.y = 1.15;
+    group.add(envelope);
+
+    // Contrasting vertical gore stripe
+    const stripe = new THREE.Mesh(
+      new THREE.SphereGeometry(7.05, 12, 10, 0, Math.PI / 4),
+      new THREE.MeshStandardMaterial({ color: 0xFFFAF0, roughness: 0.6 })
+    );
+    stripe.scale.y = 1.15;
+    group.add(stripe);
+
+    const basket = new THREE.Mesh(
+      new THREE.BoxGeometry(2.4, 1.8, 2.4),
+      new THREE.MeshStandardMaterial({ color: 0x8B5A2B })
+    );
+    basket.position.y = -10.5;
+    group.add(basket);
+
+    const height = 55 + this.seededRandom(seed + 2) * 35;
+    group.position.set(x, height, z);
+    this.scene.add(group);
+    objects.push(group);
+
+    this.registerAmbient(chunkKey, {
+      mesh: group, type: 'balloon',
+      baseY: height,
+      phase: this.seededRandom(seed + 3) * Math.PI * 2,
+      driftAngle: this.seededRandom(seed + 4) * Math.PI * 2,
+      anchorX: x, anchorZ: z,
+    });
+  }
+
+  addRowboat(x, z, pondRadius, chunkKey, objects, seed) {
+    const group = new THREE.Group();
+    const hull = new THREE.Mesh(
+      new THREE.BoxGeometry(4.5, 1, 1.8),
+      new THREE.MeshStandardMaterial({ color: 0x7B4A2D })
+    );
+    hull.position.y = 0.4;
+    group.add(hull);
+    const bow = new THREE.Mesh(
+      new THREE.ConeGeometry(0.9, 1.6, 4),
+      new THREE.MeshStandardMaterial({ color: 0x7B4A2D })
+    );
+    bow.rotation.z = -Math.PI / 2;
+    bow.position.set(3.0, 0.4, 0);
+    group.add(bow);
+
+    const ox = x + (this.seededRandom(seed + 20) - 0.5) * pondRadius * 0.6;
+    const oz = z + (this.seededRandom(seed + 21) - 0.5) * pondRadius * 0.6;
+    group.position.set(ox, 0.1, oz);
+    group.rotation.y = this.seededRandom(seed + 22) * Math.PI * 2;
+    this.scene.add(group);
+    objects.push(group);
+
+    this.registerAmbient(chunkKey, {
+      mesh: group, type: 'boat',
+      phase: this.seededRandom(seed + 23) * Math.PI * 2,
+    });
+  }
+
+  addCastle(x, z, objects, colliders) {
+    const group = new THREE.Group();
+    const stone = new THREE.MeshStandardMaterial({ color: 0x9E9E8E, roughness: 0.9 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x8B2500 });
+
+    // Four corner towers + conical roofs
+    const towerOffsets = [[-14, -14], [14, -14], [-14, 14], [14, 14]];
+    for (const [tx, tz] of towerOffsets) {
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 4, 22, 8), stone);
+      tower.position.set(tx, 11, tz);
+      group.add(tower);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(4.5, 7, 8), roofMat);
+      roof.position.set(tx, 25.5, tz);
+      group.add(roof);
+    }
+
+    // Curtain walls
+    for (const [wx, wz, ww, wd] of [[0, -14, 28, 3], [0, 14, 28, 3], [-14, 0, 3, 28], [14, 0, 3, 28]]) {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(ww, 12, wd), stone);
+      wall.position.set(wx, 6, wz);
+      group.add(wall);
+    }
+
+    // Central keep with banner
+    const keep = new THREE.Mesh(new THREE.BoxGeometry(10, 18, 10), stone);
+    keep.position.y = 9;
+    group.add(keep);
+    const keepRoof = new THREE.Mesh(new THREE.ConeGeometry(8, 8, 4), roofMat);
+    keepRoof.position.y = 22;
+    keepRoof.rotation.y = Math.PI / 4;
+    group.add(keepRoof);
+    const banner = new THREE.Mesh(
+      new THREE.PlaneGeometry(3, 2),
+      new THREE.MeshStandardMaterial({ color: 0xE8384F, side: THREE.DoubleSide })
+    );
+    banner.position.set(1.5, 28, 0);
+    group.add(banner);
+
+    group.position.set(x, 0, z);
+    this.scene.add(group);
+    objects.push(group);
+    colliders.push({ x, z, radius: 22, topY: 26 });
+  }
+
+  addLighthouse(x, z, chunkKey, objects, colliders) {
+    const group = new THREE.Group();
+
+    // Striped tower: alternating red/white segments
+    for (let i = 0; i < 5; i++) {
+      const seg = new THREE.Mesh(
+        new THREE.CylinderGeometry(2.6 - i * 0.25, 2.8 - i * 0.25, 7, 10),
+        new THREE.MeshStandardMaterial({ color: i % 2 === 0 ? 0xE8384F : 0xFFFAF0 })
+      );
+      seg.position.y = 3.5 + i * 7;
+      group.add(seg);
+    }
+
+    // Lamp room
+    const lamp = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.8, 1.8, 3, 8),
+      new THREE.MeshStandardMaterial({ color: 0xFFFF99, emissive: 0xFFFF66, emissiveIntensity: 1.5 })
+    );
+    lamp.position.y = 37;
+    group.add(lamp);
+    const cap = new THREE.Mesh(
+      new THREE.ConeGeometry(2.4, 3, 8),
+      new THREE.MeshStandardMaterial({ color: 0x333333 })
+    );
+    cap.position.y = 40;
+    group.add(cap);
+
+    // Rotating light beam
+    const beam = new THREE.Mesh(
+      new THREE.BoxGeometry(60, 0.6, 2),
+      new THREE.MeshStandardMaterial({
+        color: 0xFFFFAA, emissive: 0xFFFF88, emissiveIntensity: 1.2,
+        transparent: true, opacity: 0.45,
+      })
+    );
+    beam.position.y = 37;
+    group.add(beam);
+
+    // Surrounding lake
+    const lake = new THREE.Mesh(
+      new THREE.CircleGeometry(35, 24),
+      new THREE.MeshStandardMaterial({ color: 0x2E6B8A, roughness: 0.3, metalness: 0.4 })
+    );
+    lake.rotation.x = -Math.PI / 2;
+    lake.position.y = 0.05;
+    group.add(lake);
+
+    group.position.set(x, 0, z);
+    this.scene.add(group);
+    objects.push(group);
+    colliders.push({ x, z, radius: 4, topY: 41 });
+
+    this.registerAmbient(chunkKey, { mesh: beam, type: 'lightbeam' });
+  }
+
+  /**
+   * A flock of birds in V formation that lazily orbits near the player
+   */
+  createBirdFlock() {
+    const flock = new THREE.Group();
+    const birdMat = new THREE.MeshStandardMaterial({ color: 0x2F2F2F, side: THREE.DoubleSide });
+    const offsets = [[0, 0], [-3, 3], [3, 3], [-6, 6], [6, 6], [-9, 9], [9, 9]];
+
+    for (const [ox, oz] of offsets) {
+      const bird = new THREE.Group();
+      for (const side of [-1, 1]) {
+        const wing = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.7), birdMat);
+        wing.position.x = side * 1.05;
+        wing.rotation.x = -Math.PI / 2;
+        bird.add(wing);
+        bird.userData[side === -1 ? 'leftWing' : 'rightWing'] = wing;
+      }
+      bird.position.set(ox, Math.random() * 1.5, oz);
+      flock.add(bird);
+    }
+
+    this.scene.add(flock);
+    this.birdFlock = flock;
+  }
+
+  /**
+   * Per-frame updates for ambient scenery: balloons bob and drift,
+   * boats rock, lighthouse beams sweep, birds orbit and flap
+   */
+  updateAmbient(delta) {
+    const t = this.animationTime;
+
+    for (const [, list] of this.ambient) {
+      for (const a of list) {
+        if (a.type === 'balloon') {
+          a.mesh.position.y = a.baseY + Math.sin(t * 0.4 + a.phase) * 3;
+          a.mesh.position.x = a.anchorX + Math.cos(t * 0.05 + a.phase) * 15;
+          a.mesh.position.z = a.anchorZ + Math.sin(t * 0.05 + a.phase) * 15;
+        } else if (a.type === 'boat') {
+          a.mesh.rotation.z = Math.sin(t * 1.2 + a.phase) * 0.06;
+          a.mesh.rotation.x = Math.cos(t * 0.9 + a.phase) * 0.04;
+        } else if (a.type === 'lightbeam') {
+          a.mesh.rotation.y = t * 0.8;
+        }
+      }
+    }
+
+    // Bird flock: orbits a point that follows the player
+    if (this.birdFlock && this.localPlayer) {
+      const ship = this.players.get(this.localPlayer.id);
+      if (ship) {
+        this.birdAnchor.lerp(ship.position, Math.min(1, delta * 0.3));
+        this.birdAngle += delta * 0.12;
+        this.birdFlock.position.set(
+          this.birdAnchor.x + Math.cos(this.birdAngle) * 130,
+          46 + Math.sin(t * 0.3) * 4,
+          this.birdAnchor.z + Math.sin(this.birdAngle) * 130
+        );
+        this.birdFlock.rotation.y = -this.birdAngle - Math.PI / 2;
+
+        const flap = Math.sin(t * 9) * 0.55;
+        for (const bird of this.birdFlock.children) {
+          if (bird.userData.leftWing) bird.userData.leftWing.rotation.y = flap;
+          if (bird.userData.rightWing) bird.userData.rightWing.rotation.y = -flap;
+        }
+      }
+    }
+  }
 
   addTree(x, z, scale, objects, colliders) {
     const trunkGeo = new THREE.CylinderGeometry(1 * scale, 1.5 * scale, 8 * scale);
@@ -975,8 +1398,8 @@ class Game {
     };
 
     this.weatherPresets = {
-      clear:  { fogNear: 200, fogFar: 700, sky: 0x87CEEB, rain: 0 },
-      cloudy: { fogNear: 150, fogFar: 500, sky: 0x8899AA, rain: 0 },
+      clear:  { fogNear: 300, fogFar: 950, sky: 0x87CEEB, rain: 0 },
+      cloudy: { fogNear: 200, fogFar: 650, sky: 0x8899AA, rain: 0 },
       rainy:  { fogNear: 80,  fogFar: 350, sky: 0x556677, rain: 1 },
       foggy:  { fogNear: 30,  fogFar: 180, sky: 0x999999, rain: 0 },
     };
@@ -2361,6 +2784,7 @@ class Game {
     this.updateWeather(delta);
     this.updateSmokeParticles(delta);
     this.updateCaptureWindmills(delta);
+    this.updateAmbient(delta);
 
     // Takeoff sequence
     if (this.takeoffPhase) {

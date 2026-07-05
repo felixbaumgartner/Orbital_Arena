@@ -197,6 +197,16 @@ class Game {
   init() {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(window.devicePixelRatio);
+
+    // Filmic tone mapping: the single biggest "AAA look" switch — rich
+    // saturated mids, soft highlight rolloff instead of clipping
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.15;
+
+    // Real-time shadows ground every object in the world
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
     document.getElementById('game-container').appendChild(this.renderer.domElement);
 
     this.camera.position.set(0, 50, 40);
@@ -205,15 +215,32 @@ class Game {
     this.scene.background = new THREE.Color(0x87CEEB);
     this.scene.fog = new THREE.Fog(0x87CEEB, GAME_CONFIG.FOG_NEAR, GAME_CONFIG.FOG_FAR);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+    // Three-point outdoor rig: weak neutral fill, strong warm key (sun),
+    // cool sky / green ground bounce. Contrast comes from the ratio.
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.35);
     this.scene.add(ambientLight);
 
-    const sunLight = new THREE.DirectionalLight(0xffeb99, 1.2);
-    sunLight.position.set(50, 100, 50);
+    const sunLight = new THREE.DirectionalLight(0xFFE3B3, 1.9);
+    sunLight.position.set(120, 180, 80);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.set(2048, 2048);
+    sunLight.shadow.camera.near = 20;
+    sunLight.shadow.camera.far = 600;
+    const S = 280; // shadow frustum half-size, follows the player
+    sunLight.shadow.camera.left = -S;
+    sunLight.shadow.camera.right = S;
+    sunLight.shadow.camera.top = S;
+    sunLight.shadow.camera.bottom = -S;
+    sunLight.shadow.bias = -0.0004;
+    sunLight.shadow.normalBias = 1.5;
     this.scene.add(sunLight);
+    this.scene.add(sunLight.target);
+    this.sunLight = sunLight;
 
-    const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x4CAF50, 0.3);
+    const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x5B8C3E, 0.55);
     this.scene.add(hemiLight);
+
+    this.createSkyDome();
 
     this.createInfiniteTerrain();
     this.createBirdFlock();
@@ -757,6 +784,16 @@ class Game {
       this.addTulipPickup(px, pz, type, `${chunkX},${chunkZ}`, objects);
     }
 
+    // Everything in the world casts and receives shadows
+    for (const obj of objects) {
+      obj.traverse(child => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+    }
+
     this.chunks.set(chunkKey, objects);
     this.chunkLods.set(chunkKey, lod);
     this.obstacles.set(chunkKey, colliders);
@@ -848,6 +885,61 @@ class Game {
   }
 
   // --- Reusable scenery helpers ---
+
+  /**
+   * Gradient sky dome (deep zenith blue fading to hazy horizon) with a
+   * glowing sun disc. Replaces the flat single-color background.
+   */
+  createSkyDome() {
+    const geo = new THREE.SphereGeometry(1400, 24, 12);
+    const mat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+      uniforms: {
+        topColor: { value: new THREE.Color(0x3D7EDB) },
+        bottomColor: { value: new THREE.Color(0xC9E8F5) },
+      },
+      vertexShader: `
+        varying vec3 vWorldPos;
+        void main() {
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorldPos = wp.xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: `
+        uniform vec3 topColor;
+        uniform vec3 bottomColor;
+        varying vec3 vWorldPos;
+        void main() {
+          float h = normalize(vWorldPos - cameraPosition).y;
+          float t = pow(max(h, 0.0), 0.55);
+          gl_FragColor = vec4(mix(bottomColor, topColor, t), 1.0);
+        }`,
+    });
+    this.skyDome = new THREE.Mesh(geo, mat);
+    this.skyDome.renderOrder = -10;
+    this.scene.add(this.skyDome);
+
+    // Sun disc + soft glow, fixed in the sky along the sunlight direction
+    const sunDir = new THREE.Vector3(120, 180, 80).normalize();
+    const sunGroup = new THREE.Group();
+    const disc = new THREE.Mesh(
+      new THREE.CircleGeometry(55, 24),
+      new THREE.MeshBasicMaterial({ color: 0xFFF6D5, fog: false })
+    );
+    const glow = new THREE.Mesh(
+      new THREE.CircleGeometry(130, 24),
+      new THREE.MeshBasicMaterial({ color: 0xFFEBB0, transparent: true, opacity: 0.25, fog: false })
+    );
+    sunGroup.add(glow);
+    sunGroup.add(disc);
+    sunGroup.position.copy(sunDir.multiplyScalar(1300));
+    sunGroup.lookAt(0, 0, 0);
+    sunGroup.renderOrder = -9;
+    this.sunGroup = sunGroup;
+    this.scene.add(sunGroup);
+  }
 
   registerAmbient(chunkKey, entry) {
     if (!this.ambient.has(chunkKey)) this.ambient.set(chunkKey, []);
@@ -1146,6 +1238,26 @@ class Game {
    */
   updateAmbient(delta) {
     const t = this.animationTime;
+
+    // Sky dome follows the camera (appears infinite) and its gradient
+    // tracks the weather's sky color: deep saturated zenith, hazy horizon
+    if (this.skyDome) {
+      this.skyDome.position.copy(this.camera.position);
+      const sky = this.scene.background;
+      if (sky && sky.isColor) {
+        const u = this.skyDome.material.uniforms;
+        u.topColor.value.copy(sky).multiplyScalar(0.62);
+        u.bottomColor.value.copy(sky).lerp(new THREE.Color(0xFFFFFF), 0.55);
+      }
+    }
+    if (this.sunGroup) {
+      this.sunGroup.position.set(
+        this.camera.position.x + 120 / 232 * 1300,
+        this.camera.position.y + 180 / 232 * 1300,
+        this.camera.position.z + 80 / 232 * 1300
+      );
+      this.sunGroup.lookAt(this.camera.position);
+    }
 
     for (const [, list] of this.ambient) {
       for (const a of list) {
@@ -1971,6 +2083,10 @@ class Game {
     planeGroup.userData.glowMat = glowMat;
     planeGroup.userData.abMat = abMat;
 
+    planeGroup.traverse(child => {
+      if (child.isMesh) child.castShadow = true;
+    });
+
     return planeGroup;
   }
 
@@ -2737,6 +2853,23 @@ class Game {
     this.camera.position.y = ship.position.y + camUp;
     this.camera.position.z = ship.position.z + Math.cos(this.shipRotation) * camBehind;
     this.camera.lookAt(ship.position);
+
+    // Speed sensation: FOV widens as you go faster
+    const targetFov = 75 + (speed / GAME_CONFIG.BOOST_SPEED) * 10;
+    if (Math.abs(this.camera.fov - targetFov) > 0.05) {
+      this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, delta * 4);
+      this.camera.updateProjectionMatrix();
+    }
+
+    // Camera leans into the bank (clamped so barrel rolls don't flip the view)
+    const camRoll = Math.max(-0.7, Math.min(0.7, ship.rotation.z)) * 0.35;
+    this.camera.rotateZ(camRoll);
+
+    // Shadow frustum follows the player so shadows stay crisp everywhere
+    if (this.sunLight) {
+      this.sunLight.position.set(ship.position.x + 120, 180, ship.position.z + 80);
+      this.sunLight.target.position.set(ship.position.x, 0, ship.position.z);
+    }
   }
 
   checkCollisions(ship) {

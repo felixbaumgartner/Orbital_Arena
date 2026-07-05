@@ -112,6 +112,9 @@ class Game {
     this.crashed = false;
     this.crashTimer = 0;
 
+    // Death state (shot down — server controls respawn)
+    this.dead = false;
+
     // Shooting
     this.lastFireTime = 0;
 
@@ -1456,6 +1459,10 @@ class Game {
   connectToServer(username) {
     try {
       this.socket = io({
+        // Matches the Socket.IO mount path used by both the local server
+        // and the Vercel Function (api/socket-io.js)
+        path: '/api/socket-io/socket.io',
+        transports: ['websocket'],
         reconnection: true,
         reconnectionAttempts: GAME_CONFIG.RECONNECT_ATTEMPTS,
         reconnectionDelay: GAME_CONFIG.RECONNECT_DELAY,
@@ -1576,13 +1583,64 @@ class Game {
       });
 
       this.socket.on('playerHit', (data) => {
-        if (data.targetId === this.localPlayer?.id) {
-          this.playerHealth = Math.max(0, this.playerHealth - data.damage);
-          this.updateHealth(data.damage);
+        // Remove the projectile visual that scored the hit
+        if (data.projectileId) {
+          const projectile = this.projectiles.get(data.projectileId);
+          if (projectile) {
+            this.scene.remove(projectile);
+            this.projectiles.delete(data.projectileId);
+          }
         }
-        if (data.gameState) {
-          this.gameState = data.gameState;
-          this.updateHUD();
+
+        if (data.targetId === this.localPlayer?.id) {
+          this.playerHealth = typeof data.targetHealth === 'number'
+            ? data.targetHealth
+            : Math.max(0, this.playerHealth - data.damage);
+          this.setHealthBar(this.playerHealth);
+          if (data.killed) this.handleLocalDeath();
+        }
+
+        // Keep scoreboard stats in sync
+        if (this.gameState?.players) {
+          for (const p of this.gameState.players) {
+            if (p.id === data.attackerId && typeof data.attackerKills === 'number') p.kills = data.attackerKills;
+            if (p.id === data.targetId && typeof data.targetDeaths === 'number') p.deaths = data.targetDeaths;
+          }
+        }
+        if (this.localPlayer) {
+          if (data.attackerId === this.localPlayer.id && typeof data.attackerKills === 'number') {
+            this.localPlayer.kills = data.attackerKills;
+          }
+          if (data.targetId === this.localPlayer.id && typeof data.targetDeaths === 'number') {
+            this.localPlayer.deaths = data.targetDeaths;
+          }
+        }
+
+        // Merge (don't replace) game state — the payload only carries scores/time
+        if (data.gameState && this.gameState) {
+          this.gameState.scores = data.gameState.scores;
+          this.gameState.timeRemaining = data.gameState.timeRemaining;
+        }
+        this.updateHUD();
+      });
+
+      this.socket.on('playerRespawn', (data) => {
+        const ship = this.players.get(data.playerId);
+        if (ship) {
+          ship.position.set(data.position.x, GAME_CONFIG.FLIGHT_HEIGHT, data.position.z);
+        }
+        if (data.playerId === this.localPlayer?.id) {
+          this.dead = false;
+          this.playerHealth = data.health;
+          this.setHealthBar(data.health);
+          this.updateEnergyBar(data.energy);
+          if (this.localPlayer) this.localPlayer.energy = data.energy;
+          const overlay = document.getElementById('crash-overlay');
+          if (overlay) {
+            overlay.style.display = 'none';
+            const text = overlay.querySelector('.crash-text');
+            if (text) text.textContent = 'CRASHED!';
+          }
         }
       });
 
@@ -1633,6 +1691,22 @@ class Game {
     if (!healthFill) return;
     const currentWidth = parseFloat(healthFill.style.width) || 100;
     healthFill.style.width = `${Math.max(0, currentWidth - damage)}%`;
+  }
+
+  setHealthBar(health) {
+    const healthFill = document.querySelector('.health-fill');
+    if (!healthFill) return;
+    healthFill.style.width = `${Math.max(0, Math.min(100, health))}%`;
+  }
+
+  handleLocalDeath() {
+    this.dead = true;
+    const overlay = document.getElementById('crash-overlay');
+    if (overlay) {
+      const text = overlay.querySelector('.crash-text');
+      if (text) text.textContent = 'SHOT DOWN!';
+      overlay.style.display = 'flex';
+    }
   }
 
   updateEnergyBar(energyPercent) {
@@ -1742,7 +1816,7 @@ class Game {
 
   updatePlayer(delta) {
     if (!this.localPlayer || !this.players.has(this.localPlayer.id)) return;
-    if (this.crashed || !this.controlsEnabled) return;
+    if (this.crashed || this.dead || !this.controlsEnabled) return;
 
     const ship = this.players.get(this.localPlayer.id);
 

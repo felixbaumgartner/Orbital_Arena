@@ -61,6 +61,20 @@ const GAME_CONFIG = {
   THROTTLE_MIN: 0.35,
   THROTTLE_MAX: 1.5,
   THROTTLE_RATE: 0.6,    // throttle change per second while held
+
+  // Tulip power-ups
+  PICKUP_RADIUS: 9,
+  PICKUP_SPAWN_CHANCE: 0.5,       // per chunk
+  SPEED_SURGE_DURATION: 5,        // seconds of golden tulip speed surge
+  SPEED_SURGE_MULTIPLIER: 1.5,
+
+  // Barrel roll
+  ROLL_DURATION: 0.7,
+  ROLL_COOLDOWN: 2.0,
+  ROLL_DODGE_SPEED: 45,           // sideways dodge speed during a roll
+
+  // Radar
+  RADAR_RANGE: 500,               // world units shown on the minimap
   ENERGY_DRAIN_RATE: 20,
   ENERGY_REGEN_RATE: 10,
 
@@ -154,6 +168,18 @@ class Game {
     this.captureWindmills = new Map();
     this.windmillStates = {};
 
+    // Tulip power-ups
+    this.powerups = new Map(); // chunk key -> [{mesh, type, active, x, z}]
+    this.speedSurge = 0;
+
+    // Barrel roll
+    this.rollTimer = 0;
+    this.rollCooldown = 0;
+    this.rollDir = 1;
+
+    // Audio (initialized on first user gesture)
+    this.audio = null;
+
     this.init();
   }
 
@@ -201,6 +227,7 @@ class Game {
     const chatInput = document.getElementById('chat-input');
 
     startButton.addEventListener('click', () => {
+      this.initAudio(); // requires a user gesture
       const username = this.sanitizeInput(usernameInput.value.trim());
       if (!this.isValidUsername(username)) {
         alert(`Username must be between ${GAME_CONFIG.USERNAME_MIN_LENGTH} and ${GAME_CONFIG.USERNAME_MAX_LENGTH} characters and contain only letters, numbers, and spaces.`);
@@ -329,6 +356,7 @@ class Game {
         });
         this.chunks.delete(key);
         this.obstacles.delete(key);
+        this.powerups.delete(key);
       }
     }
 
@@ -634,8 +662,101 @@ class Game {
       }
     }
 
+    // --- Magic tulip power-up (any biome) ---
+    if (this.seededRandom(seed + 9999) < GAME_CONFIG.PICKUP_SPAWN_CHANCE) {
+      const px = baseX + 20 + this.seededRandom(seed + 9998) * (GAME_CONFIG.CHUNK_SIZE - 40);
+      const pz = baseZ + 20 + this.seededRandom(seed + 9997) * (GAME_CONFIG.CHUNK_SIZE - 40);
+      const type = this.seededRandom(seed + 9996) < 0.5 ? 'energy' : 'speed';
+      this.addTulipPickup(px, pz, type, `${chunkX},${chunkZ}`, objects);
+    }
+
     this.chunks.set(`${chunkX},${chunkZ}`, objects);
     this.obstacles.set(`${chunkX},${chunkZ}`, colliders);
+  }
+
+  /**
+   * A giant glowing tulip on a tall stem, with a floating halo ring at
+   * flight height. Fly through the ring to collect it.
+   * 'energy' (blue) refills boost energy; 'speed' (gold) grants a surge.
+   */
+  addTulipPickup(x, z, type, chunkKey, objects) {
+    const color = type === 'energy' ? 0x00BFFF : 0xFFD700;
+    const group = new THREE.Group();
+
+    // Tall stem reaching up toward flight height
+    const stemGeo = new THREE.CylinderGeometry(0.4, 0.7, GAME_CONFIG.FLIGHT_HEIGHT - 6, 6);
+    const stemMat = new THREE.MeshStandardMaterial({ color: 0x2E8B57 });
+    const stem = new THREE.Mesh(stemGeo, stemMat);
+    stem.position.y = (GAME_CONFIG.FLIGHT_HEIGHT - 6) / 2;
+    group.add(stem);
+
+    // Tulip head: cup of petals
+    const petalMat = new THREE.MeshStandardMaterial({
+      color, emissive: color, emissiveIntensity: 0.6,
+    });
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2;
+      const petalGeo = new THREE.ConeGeometry(1.6, 4.5, 6);
+      const petal = new THREE.Mesh(petalGeo, petalMat);
+      petal.position.set(Math.cos(angle) * 1.3, GAME_CONFIG.FLIGHT_HEIGHT - 4, Math.sin(angle) * 1.3);
+      petal.rotation.x = Math.sin(angle) * 0.35;
+      petal.rotation.z = -Math.cos(angle) * 0.35;
+      group.add(petal);
+    }
+
+    // Floating halo ring at flight height — the visual "fly through here"
+    const ringGeo = new THREE.TorusGeometry(7, 0.5, 8, 32);
+    const ringMat = new THREE.MeshStandardMaterial({
+      color, emissive: color, emissiveIntensity: 1.2,
+      transparent: true, opacity: 0.85,
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
+    ring.rotation.x = Math.PI / 2;
+    group.add(ring);
+    group.userData.ring = ring;
+
+    group.position.set(x, 0, z);
+    this.scene.add(group);
+    objects.push(group);
+
+    if (!this.powerups.has(chunkKey)) this.powerups.set(chunkKey, []);
+    this.powerups.get(chunkKey).push({ mesh: group, type, active: true, x, z });
+  }
+
+  /**
+   * Spin halo rings and check whether the local player flew through one
+   */
+  updatePowerups(delta, ship) {
+    for (const [, list] of this.powerups) {
+      for (const p of list) {
+        if (!p.active) continue;
+        if (p.mesh.userData.ring) p.mesh.userData.ring.rotation.z += delta * 1.5;
+
+        if (ship) {
+          const dx = ship.position.x - p.x;
+          const dz = ship.position.z - p.z;
+          if (dx * dx + dz * dz < GAME_CONFIG.PICKUP_RADIUS * GAME_CONFIG.PICKUP_RADIUS) {
+            p.active = false;
+            p.mesh.visible = false;
+            this.collectPowerup(p.type);
+          }
+        }
+      }
+    }
+  }
+
+  collectPowerup(type) {
+    if (type === 'energy') {
+      if (this.localPlayer) this.localPlayer.energy = 100;
+      this.updateEnergyBar(100);
+    } else if (type === 'speed') {
+      this.speedSurge = GAME_CONFIG.SPEED_SURGE_DURATION;
+    }
+    this.playSound('pickup');
+    this.displayChatMessage('🌷', type === 'energy'
+      ? 'Blue tulip! Energy restored!'
+      : 'Golden tulip! Speed surge!');
   }
 
   // --- Reusable scenery helpers ---
@@ -1456,6 +1577,7 @@ class Game {
     const projectileId = `${this.localPlayer.id}_${Date.now()}`;
     this.scene.add(projectile);
     this.projectiles.set(projectileId, projectile);
+    this.playSound('shot');
 
     if (this.socket && this.isConnected) {
       this.socket.emit('fireProjectile', {
@@ -1612,6 +1734,7 @@ class Game {
             ? data.targetHealth
             : Math.max(0, this.playerHealth - data.damage);
           this.setHealthBar(this.playerHealth);
+          this.playSound(data.killed ? 'explosion' : 'hit');
           if (data.killed) this.handleLocalDeath();
         }
 
@@ -1684,6 +1807,191 @@ class Game {
       console.error('Failed to initialize connection:', error);
       alert('Failed to connect to server. Please refresh the page.');
     }
+  }
+
+  // =========================================================================
+  // SOUND (synthesized with Web Audio — no audio files)
+  // =========================================================================
+
+  initAudio() {
+    if (this.audio) return;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const master = ctx.createGain();
+      master.gain.value = 0.5;
+      master.connect(ctx.destination);
+
+      // Continuous engine hum: sawtooth through a lowpass, pitch follows speed
+      const engineOsc = ctx.createOscillator();
+      engineOsc.type = 'sawtooth';
+      engineOsc.frequency.value = 70;
+      const engineFilter = ctx.createBiquadFilter();
+      engineFilter.type = 'lowpass';
+      engineFilter.frequency.value = 220;
+      const engineGain = ctx.createGain();
+      engineGain.gain.value = 0.05;
+      engineOsc.connect(engineFilter).connect(engineGain).connect(master);
+      engineOsc.start();
+
+      this.audio = { ctx, master, engineOsc, engineGain, muted: false };
+    } catch (e) {
+      console.error('Audio init failed:', e);
+    }
+  }
+
+  toggleMute() {
+    if (!this.audio) return;
+    this.audio.muted = !this.audio.muted;
+    this.audio.master.gain.value = this.audio.muted ? 0 : 0.5;
+    this.displayChatMessage('🔊', this.audio.muted ? 'Sound muted (M to unmute)' : 'Sound on');
+  }
+
+  playSound(name) {
+    if (!this.audio || this.audio.muted) return;
+    const { ctx, master } = this.audio;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain).connect(master);
+
+    switch (name) {
+      case 'shot':
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(700, t);
+        osc.frequency.exponentialRampToValueAtTime(180, t + 0.09);
+        gain.gain.setValueAtTime(0.12, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+        osc.start(t); osc.stop(t + 0.1);
+        break;
+      case 'hit':
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(140, t);
+        osc.frequency.exponentialRampToValueAtTime(50, t + 0.2);
+        gain.gain.setValueAtTime(0.25, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+        osc.start(t); osc.stop(t + 0.22);
+        break;
+      case 'explosion':
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(90, t);
+        osc.frequency.exponentialRampToValueAtTime(30, t + 0.6);
+        gain.gain.setValueAtTime(0.35, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
+        osc.start(t); osc.stop(t + 0.65);
+        break;
+      case 'pickup':
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(660, t);
+        osc.frequency.setValueAtTime(990, t + 0.09);
+        gain.gain.setValueAtTime(0.2, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+        osc.start(t); osc.stop(t + 0.25);
+        break;
+      case 'roll':
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(220, t);
+        osc.frequency.exponentialRampToValueAtTime(880, t + 0.3);
+        osc.frequency.exponentialRampToValueAtTime(220, t + 0.6);
+        gain.gain.setValueAtTime(0.1, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
+        osc.start(t); osc.stop(t + 0.65);
+        break;
+    }
+  }
+
+  updateEngineSound(speed) {
+    if (!this.audio || this.audio.muted) return;
+    // Pitch scales with airspeed
+    this.audio.engineOsc.frequency.value = 40 + speed * 0.7;
+  }
+
+  // =========================================================================
+  // BARREL ROLL
+  // =========================================================================
+
+  startBarrelRoll() {
+    if (this.rollTimer > 0 || this.rollCooldown > 0) return;
+    if (this.crashed || this.dead || !this.controlsEnabled) return;
+    this.rollTimer = GAME_CONFIG.ROLL_DURATION;
+    this.rollCooldown = GAME_CONFIG.ROLL_COOLDOWN;
+    // Roll toward held direction; default left
+    this.rollDir = this.controls.right ? -1 : 1;
+    this.playSound('roll');
+  }
+
+  // =========================================================================
+  // RADAR
+  // =========================================================================
+
+  updateRadar(ship) {
+    const canvas = document.getElementById('radar');
+    if (!canvas || !ship) return;
+    const ctx = canvas.getContext('2d');
+    const size = canvas.width;
+    const half = size / 2;
+    const scale = half / GAME_CONFIG.RADAR_RANGE;
+
+    ctx.clearRect(0, 0, size, size);
+
+    // Background + range rings
+    ctx.fillStyle = 'rgba(0, 20, 0, 0.65)';
+    ctx.beginPath();
+    ctx.arc(half, half, half - 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0, 255, 100, 0.25)';
+    ctx.lineWidth = 1;
+    for (const r of [0.5, 1]) {
+      ctx.beginPath();
+      ctx.arc(half, half, (half - 2) * r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Heading-up radar: rotate world points by ship heading
+    const cos = Math.cos(this.shipRotation);
+    const sin = Math.sin(this.shipRotation);
+    const project = (wx, wz) => {
+      const dx = wx - ship.position.x;
+      const dz = wz - ship.position.z;
+      // world -> ship-relative (facing -Z at rotation 0)
+      const rx = dx * cos - dz * sin;
+      const rz = dx * sin + dz * cos;
+      return { x: half + rx * scale, y: half + rz * scale, inRange: dx * dx + dz * dz < GAME_CONFIG.RADAR_RANGE ** 2 };
+    };
+
+    // Capture windmills (color = owning team)
+    for (const mill of CAPTURE_WINDMILLS) {
+      const state = this.windmillStates[mill.id];
+      const p = project(mill.x, mill.z);
+      if (!p.inRange) continue;
+      ctx.fillStyle = state?.team === 'red' ? '#ff5555'
+        : state?.team === 'blue' ? '#5599ff' : '#cccccc';
+      ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+    }
+
+    // Other players (enemy red, teammate green)
+    const myTeam = this.localPlayer?.team;
+    const teamOf = {};
+    if (this.gameState?.players) {
+      for (const pl of this.gameState.players) teamOf[pl.id] = pl.team;
+    }
+    for (const [id, otherShip] of this.players) {
+      if (id === this.localPlayer?.id) continue;
+      const p = project(otherShip.position.x, otherShip.position.z);
+      if (!p.inRange) continue;
+      ctx.fillStyle = teamOf[id] === myTeam ? '#44ff88' : '#ff4444';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Own ship: triangle pointing up (heading-up display)
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(half, half - 6);
+    ctx.lineTo(half - 4, half + 5);
+    ctx.lineTo(half + 4, half + 5);
+    ctx.closePath();
+    ctx.fill();
   }
 
   // =========================================================================
@@ -1818,6 +2126,8 @@ class Game {
       case 'e': case 'arrowright': this.controls.rotateRight = true; event.preventDefault(); break;
       case 'arrowup': this.controls.throttleUp = true; event.preventDefault(); break;
       case 'arrowdown': this.controls.throttleDown = true; event.preventDefault(); break;
+      case 'r': this.startBarrelRoll(); break;
+      case 'm': this.toggleMute(); break;
     }
   }
 
@@ -1866,8 +2176,16 @@ class Game {
     } else {
       this.localPlayer.energy = Math.min(100, this.localPlayer.energy + (GAME_CONFIG.ENERGY_REGEN_RATE * delta));
     }
+
+    // Golden tulip speed surge
+    if (this.speedSurge > 0) {
+      this.speedSurge -= delta;
+      speed *= GAME_CONFIG.SPEED_SURGE_MULTIPLIER;
+    }
+
     this.updateEnergyBar(this.localPlayer.energy);
     this.updateSpeedBar(speed);
+    this.updateEngineSound(speed);
 
     const prevRotation = this.shipRotation;
 
@@ -1896,7 +2214,20 @@ class Game {
     const clampedRate = Math.max(-GAME_CONFIG.TURN_RATE, Math.min(GAME_CONFIG.TURN_RATE, frameTurnRate));
     const targetBank = (clampedRate / GAME_CONFIG.TURN_RATE) * GAME_CONFIG.MAX_BANK_ANGLE;
     const bankSmooth = Math.min(1, GAME_CONFIG.BANK_SMOOTHING * delta);
-    ship.rotation.z += (targetBank - ship.rotation.z) * bankSmooth;
+
+    // Barrel roll overrides banking: full 360° roll + sideways dodge
+    if (this.rollCooldown > 0) this.rollCooldown -= delta;
+    if (this.rollTimer > 0) {
+      this.rollTimer = Math.max(0, this.rollTimer - delta);
+      const progress = 1 - this.rollTimer / GAME_CONFIG.ROLL_DURATION;
+      ship.rotation.z = this.rollDir * Math.PI * 2 * progress;
+      // Dodge sideways (perpendicular to facing) while rolling
+      const dodge = GAME_CONFIG.ROLL_DODGE_SPEED * delta * this.rollDir;
+      ship.position.x -= Math.cos(this.shipRotation) * dodge;
+      ship.position.z += Math.sin(this.shipRotation) * dodge;
+    } else {
+      ship.rotation.z += (targetBank - ship.rotation.z) * bankSmooth;
+    }
 
     const movement = new THREE.Vector3();
     if (this.controls.forward) {
@@ -2040,6 +2371,8 @@ class Game {
       this.updatePlayer(delta);
 
       const playerShip = this.players.get(this.localPlayer.id);
+      this.updatePowerups(delta, playerShip);
+      this.updateRadar(playerShip);
       this.projectiles.forEach((projectile, id) => {
         if (projectile.velocity) {
           projectile.position.add(projectile.velocity.clone().multiplyScalar(delta));

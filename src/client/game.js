@@ -53,6 +53,7 @@ const GAME_CONFIG = {
   // Turning & banking
   TURN_RATE: 3,          // max turn rate (rad/s)
   TURN_SMOOTHING: 6,     // how quickly turn rate ramps toward input (per second)
+  ORIENT_SMOOTHING: 2,   // how quickly the nose swings toward WASD movement direction
   MAX_BANK_ANGLE: 0.55,  // visual roll at full turn (rad, ~31°)
   BANK_SMOOTHING: 5,     // how quickly the roll eases toward its target
 
@@ -1868,16 +1869,32 @@ class Game {
     this.updateEnergyBar(this.localPlayer.energy);
     this.updateSpeedBar(speed);
 
-    // Smooth turning: turn rate eases toward the input instead of snapping
+    const prevRotation = this.shipRotation;
+
+    // Smooth manual turning (Q/E): turn rate eases toward the input
     const turnInput = (this.controls.rotateLeft ? 1 : 0) - (this.controls.rotateRight ? 1 : 0);
     const targetTurnRate = turnInput * GAME_CONFIG.TURN_RATE;
     const turnSmooth = Math.min(1, GAME_CONFIG.TURN_SMOOTHING * delta);
     this.rotationVelocity += (targetTurnRate - this.rotationVelocity) * turnSmooth;
     this.shipRotation += this.rotationVelocity * delta;
+
+    // Orient the nose toward the WASD movement direction. S is excluded so
+    // reversing doesn't flip the plane around.
+    const orientFwd = this.controls.forward ? 1 : 0;
+    const orientLat = (this.controls.left ? 1 : 0) - (this.controls.right ? 1 : 0);
+    if (orientLat !== 0 || orientFwd !== 0) {
+      const headingOffset = Math.atan2(orientLat, orientFwd); // relative to current facing
+      this.shipRotation += headingOffset * Math.min(1, GAME_CONFIG.ORIENT_SMOOTHING * delta);
+    }
     ship.rotation.y = this.shipRotation;
 
-    // Bank into the turn (visual roll proportional to turn rate)
-    const targetBank = (this.rotationVelocity / GAME_CONFIG.TURN_RATE) * GAME_CONFIG.MAX_BANK_ANGLE;
+    // Bank into the turn — roll proportional to the total turn rate this
+    // frame (manual Q/E turning plus WASD orientation combined)
+    let frameTurn = this.shipRotation - prevRotation;
+    frameTurn = Math.atan2(Math.sin(frameTurn), Math.cos(frameTurn)); // wrap to [-π, π]
+    const frameTurnRate = delta > 0 ? frameTurn / delta : 0;
+    const clampedRate = Math.max(-GAME_CONFIG.TURN_RATE, Math.min(GAME_CONFIG.TURN_RATE, frameTurnRate));
+    const targetBank = (clampedRate / GAME_CONFIG.TURN_RATE) * GAME_CONFIG.MAX_BANK_ANGLE;
     const bankSmooth = Math.min(1, GAME_CONFIG.BANK_SMOOTHING * delta);
     ship.rotation.z += (targetBank - ship.rotation.z) * bankSmooth;
 

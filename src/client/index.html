@@ -344,13 +344,13 @@
         /* Weather indicator */
         #weather-indicator {
             position: fixed;
-            top: 1rem;
+            top: 5.7rem;
             left: 50%;
             transform: translateX(-50%);
             background: rgba(0, 0, 0, 0.5);
-            padding: 0.3rem 1rem;
+            padding: 0.2rem 0.9rem;
             border-radius: 12px;
-            font-size: 0.85rem;
+            font-size: 0.78rem;
             color: #ddd;
             letter-spacing: 0.05rem;
         }
@@ -358,7 +358,7 @@
         /* Windmill status dots */
         #windmill-panel {
             position: fixed;
-            top: 2.8rem;
+            top: 3.1rem;
             left: 50%;
             transform: translateX(-50%);
             background: rgba(0, 0, 0, 0.5);
@@ -417,7 +417,9 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(255, 0, 0, 0.4);
+            /* Red vignette: danger at the edges, view stays readable */
+            background: radial-gradient(ellipse at center,
+                rgba(255, 0, 0, 0) 42%, rgba(190, 0, 0, 0.55) 100%);
             display: none;
             justify-content: center;
             align-items: center;
@@ -426,10 +428,10 @@
         }
 
         #crash-overlay .crash-text {
-            font-size: 4rem;
+            font-size: 3rem;
             font-weight: bold;
             color: #fff;
-            text-shadow: 0 0 20px #ff0000, 0 0 40px #ff0000;
+            text-shadow: 0 0 18px rgba(255, 40, 40, 0.9);
             animation: crashPulse 0.5s ease-in-out infinite alternate;
         }
 
@@ -465,6 +467,213 @@
             from { transform: scale(1); opacity: 0.8; }
             to { transform: scale(1.05); opacity: 1; }
         }
+
+        #takeoff-overlay .takeoff-hint {
+            position: absolute;
+            bottom: 22%;
+            font-size: 1rem;
+            color: rgba(255, 255, 255, 0.85);
+            letter-spacing: 0.15rem;
+        }
+
+        /* Team score bar */
+        #score-bar {
+            position: fixed;
+            top: 0.6rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 0.4rem;
+            font-weight: bold;
+            font-size: 1.05rem;
+        }
+
+        #score-bar .score-pill {
+            padding: 0.25rem 0.9rem;
+            border-radius: 14px;
+            background: rgba(0, 0, 0, 0.55);
+        }
+
+        #score-red { color: #ff6666; }
+        #score-blue { color: #77aaff; }
+
+        #score-bar .score-pill.mine {
+            outline: 2px solid rgba(255, 255, 255, 0.85);
+        }
+
+        #time-remaining.low {
+            color: #ff5555;
+            animation: crashPulse 0.6s ease-in-out infinite alternate;
+        }
+
+        /* Hitmarker: X at the crosshair when your shot lands */
+        #hitmarker {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 26px;
+            height: 26px;
+            transform: translate(-50%, -50%) rotate(45deg);
+            pointer-events: none;
+            opacity: 0;
+        }
+
+        #hitmarker::before,
+        #hitmarker::after {
+            content: '';
+            position: absolute;
+            background: #fff;
+            box-shadow: 0 0 6px rgba(255, 255, 255, 0.9);
+        }
+
+        #hitmarker::before { width: 3px; height: 26px; left: 11.5px; }
+        #hitmarker::after { width: 26px; height: 3px; top: 11.5px; }
+
+        #hitmarker.show {
+            animation: hitPop 0.28s ease-out;
+        }
+
+        #hitmarker.kill::before,
+        #hitmarker.kill::after {
+            background: #ff5533;
+            box-shadow: 0 0 10px rgba(255, 80, 40, 0.95);
+        }
+
+        @keyframes hitPop {
+            0% { opacity: 1; transform: translate(-50%, -50%) rotate(45deg) scale(0.6); }
+            60% { opacity: 1; transform: translate(-50%, -50%) rotate(45deg) scale(1.25); }
+            100% { opacity: 0; transform: translate(-50%, -50%) rotate(45deg) scale(1); }
+        }
+
+        /* Kill feed */
+        #kill-feed {
+            position: fixed;
+            top: 19.5rem;
+            right: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            align-items: flex-end;
+            pointer-events: none;
+        }
+
+        .kill-entry {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 0.2rem 0.7rem;
+            border-radius: 10px;
+            font-size: 0.82rem;
+            animation: feedIn 0.25s ease-out, feedOut 0.6s ease-in 3.9s forwards;
+        }
+
+        @keyframes feedIn {
+            from { opacity: 0; transform: translateX(24px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        @keyframes feedOut {
+            to { opacity: 0; }
+        }
+
+        /* Kill banner: your kill, celebrated */
+        #kill-banner {
+            position: fixed;
+            top: 18%;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #FFD23F;
+            text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #kill-banner.show {
+            animation: bannerFade 2.4s ease-out forwards;
+        }
+
+        @keyframes bannerFade {
+            0% { opacity: 0; transform: translateX(-50%) scale(0.85); }
+            12% { opacity: 1; transform: translateX(-50%) scale(1.05); }
+            20% { transform: translateX(-50%) scale(1); }
+            80% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
+        /* Team banner on join */
+        #team-banner {
+            position: fixed;
+            top: 30%;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 2.2rem;
+            font-weight: bold;
+            letter-spacing: 0.25rem;
+            text-shadow: 0 2px 16px rgba(0, 0, 0, 0.85);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s;
+        }
+
+        #team-banner.show { opacity: 1; }
+        #team-banner.red { color: #ff6666; }
+        #team-banner.blue { color: #77aaff; }
+
+        /* Match end screen */
+        #end-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.75);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1100;
+        }
+
+        #end-card {
+            background: rgba(20, 28, 20, 0.95);
+            border: 2px solid #4CAF50;
+            border-radius: 12px;
+            padding: 2.5rem 3.5rem;
+            text-align: center;
+        }
+
+        #end-title {
+            font-size: 2.6rem;
+            margin-bottom: 1rem;
+            letter-spacing: 0.2rem;
+        }
+
+        #end-title.red { color: #ff6666; }
+        #end-title.blue { color: #77aaff; }
+
+        #end-score {
+            font-size: 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        #end-score .red { color: #ff6666; font-weight: bold; }
+        #end-score .blue { color: #77aaff; font-weight: bold; }
+
+        #end-stats {
+            color: #bbb;
+            margin-bottom: 1.75rem;
+        }
+
+        #end-restart {
+            padding: 0.75rem 2.5rem;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1.1rem;
+        }
+
+        #end-restart:hover { background: #45a049; }
     </style>
 </head>
 <body>
@@ -484,31 +693,25 @@
             <div id="controls-panel">
                 <h3>✈️ Flight Controls</h3>
                 <div class="control-section">
-                    <strong>Movement:</strong>
-                    <span class="key">W</span> Forward
-                    <span class="key">S</span> Back<br>
-                    <span class="key">A</span> Left
-                    <span class="key">D</span> Right
-                </div>
-                <div class="control-section">
-                    <strong>Rotate:</strong>
-                    <span class="key">Q</span> or <span class="key">←</span> Turn Left<br>
-                    <span class="key">E</span> or <span class="key">→</span> Turn Right
+                    <strong>Steer:</strong>
+                    <span class="key">A</span> / <span class="key">D</span> Turn<br>
+                    <span class="key">↑</span> Climb
+                    <span class="key">↓</span> Dive
                 </div>
                 <div class="control-section">
                     <strong>Speed:</strong>
-                    <span class="key">↑</span> Faster
-                    <span class="key">↓</span> Slower
+                    <span class="key">W</span> Faster
+                    <span class="key">S</span> Slower<br>
+                    <span class="key">Shift</span> Boost
                 </div>
                 <div class="control-section">
                     <strong>Combat:</strong>
-                    <span class="key">Space</span> Shoot
+                    <span class="key">Space</span> Shoot<br>
+                    <span class="key">R</span> Barrel Roll
                 </div>
                 <div class="control-section">
-                    <strong>Special:</strong>
-                    <span class="key">Shift</span> Boost<br>
-                    <span class="key">R</span> Barrel Roll<br>
-                    <span class="key">M</span> Mute<br>
+                    <strong>Other:</strong>
+                    <span class="key">M</span> Mute
                     <span class="key">Enter</span> Chat
                 </div>
             </div>
@@ -516,7 +719,11 @@
             <div class="stats">
                 <div>Kills: <span id="kills">0</span></div>
                 <div>Deaths: <span id="deaths">0</span></div>
-                <div>Assists: <span id="assists">0</span></div>
+            </div>
+
+            <div id="score-bar">
+                <span id="score-red" class="score-pill">RED 0</span>
+                <span id="score-blue" class="score-pill">0 BLUE</span>
             </div>
 
             <div class="team-scores">
@@ -525,7 +732,7 @@
             </div>
 
             <div class="bar-container speed-container">
-                <div class="bar-label">Speed (<span id="speed-value">200 km/h</span>)</div>
+                <div class="bar-label">Speed (<span id="speed-value">200 km/h</span>) &middot; Alt <span id="alt-value">90m</span></div>
                 <div class="speed-bar">
                     <div class="speed-fill" style="width: 50%"></div>
                 </div>
@@ -546,6 +753,9 @@
             </div>
 
             <div class="crosshair"></div>
+            <div id="hitmarker"></div>
+            <div id="kill-banner"></div>
+            <div id="kill-feed"></div>
 
             <canvas id="radar" width="140" height="140"></canvas>
 
@@ -564,25 +774,32 @@
             </div>
         </div>
 
-        <div id="tutorial">
-            <h2>Quick Tutorial</h2>
-            <p><strong>Movement:</strong></p>
-            <p>W - Forward | S - Backward</p>
-            <p>A - Strafe Left | D - Strafe Right</p>
-            <p><strong>Combat:</strong></p>
-            <p>Q or ← - Rotate Left</p>
-            <p>E or → - Rotate Right</p>
-            <p>Space - Shoot</p>
+        <div id="tutorial" class="ui-element">
+            <h2>How to Fly</h2>
+            <p>Your plane always flies forward — steer it!</p>
+            <p><strong>Steering:</strong></p>
+            <p>A / D - Bank left &amp; right</p>
+            <p>↑ / ↓ - Climb &amp; dive (fly OVER buildings, or crash into them!)</p>
             <p><strong>Speed:</strong></p>
-            <p>↑ - Speed Up | ↓ - Slow Down</p>
-            <p><strong>Special:</strong></p>
+            <p>W - Faster | S - Slower</p>
             <p>Shift - Boost (drains energy)</p>
-            <p>R - Barrel Roll (dodge!)</p>
-            <p>M - Mute sound</p>
-            <p>Enter - Chat</p>
+            <p><strong>Combat:</strong></p>
+            <p>Space - Shoot | R - Barrel roll dodge</p>
+            <p><strong>Win:</strong></p>
+            <p>Capture windmills by circling them, and shoot down the enemy team.</p>
             <p><strong>Tip:</strong> Fly through glowing tulip rings for power-ups! 🌷</p>
-            <p><strong>ESC or Enter to close this tutorial</strong></p>
-            <button id="tutorial-close">Got it!</button>
+            <button id="tutorial-close">Take off! 🛫</button>
+        </div>
+
+        <div id="team-banner"></div>
+
+        <div id="end-screen" class="ui-element">
+            <div id="end-card">
+                <div id="end-title">VICTORY!</div>
+                <div id="end-score"></div>
+                <div id="end-stats"></div>
+                <button id="end-restart">Fly Again</button>
+            </div>
         </div>
 
         <div id="chat" class="ui-element">
@@ -593,6 +810,7 @@
 
     <div id="takeoff-overlay">
         <div class="takeoff-text" id="takeoff-text">PREPARING FOR TAKEOFF...</div>
+        <div class="takeoff-hint">PRESS SPACE TO SKIP</div>
     </div>
 
     <div id="crash-overlay">

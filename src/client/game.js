@@ -20,10 +20,18 @@ const GAME_CONFIG = {
 
   FLIGHT_HEIGHT: 30,
   PLANE_COLLISION_RADIUS: 4,
-  CRASH_DURATION: 3000,
-  CRASH_HEALTH_PENALTY: 30,
+  CRASH_DURATION: 2200,
+  CRASH_HEALTH_PENALTY: 20,   // must match server CRASH_DAMAGE
+  CRASH_GRACE: 2.0,           // seconds of collision immunity after a crash respawn
   PROJECTILE_SPEED: 120,
   FIRE_COOLDOWN: 0.25,
+
+  // Altitude (the third dimension!)
+  MIN_ALTITUDE: 8,            // ground-skimming floor
+  MAX_ALTITUDE: 110,          // ceiling
+  MAX_PITCH: 0.5,             // rad of nose-up/down at full climb/dive input
+  PITCH_SMOOTHING: 5,         // how quickly pitch eases toward input
+  RESPAWN_ALTITUDE: 50,       // post-crash respawn height (above every obstacle)
 
   // Contrails & Smoke
   TRAIL_MAX_POINTS: 80,
@@ -54,7 +62,6 @@ const GAME_CONFIG = {
   // Turning & banking
   TURN_RATE: 3,          // max turn rate (rad/s)
   TURN_SMOOTHING: 6,     // how quickly turn rate ramps toward input (per second)
-  ORIENT_SMOOTHING: 2,   // how quickly the nose swings toward WASD movement direction
   MAX_BANK_ANGLE: 0.55,  // visual roll at full turn (rad, ~31°)
   BANK_SMOOTHING: 5,     // how quickly the roll eases toward its target
 
@@ -123,13 +130,15 @@ class Game {
     this.isConnected = false;
     this.reconnectAttempts = 0;
     this.controls = {
-      forward: false, backward: false, left: false, right: false,
-      boost: false, shooting: false, rotateLeft: false, rotateRight: false,
-      throttleUp: false, throttleDown: false,
+      left: false, right: false,          // A/D (or Q/E/arrows): banked turn
+      pitchUp: false, pitchDown: false,   // ↑/↓: climb & dive
+      throttleUp: false, throttleDown: false, // W/S: speed
+      boost: false, shooting: false,
     };
     this.shipRotation = 0;
     this.rotationVelocity = 0; // smoothed turn rate (rad/s)
     this.throttle = 1.0;       // speed multiplier, THROTTLE_MIN..THROTTLE_MAX
+    this.pitchAngle = 0;       // smoothed climb/dive angle (rad, positive = climbing)
 
     // Infinite terrain
     this.chunks = new Map();
@@ -142,6 +151,19 @@ class Game {
     // Crash state
     this.crashed = false;
     this.crashTimer = 0;
+    this.crashGrace = 0;
+
+    // Camera shake
+    this.shakeTime = 0;
+    this.shakeDur = 0;
+    this.shakeMag = 0;
+
+    // Live match timer (client-side countdown between server updates)
+    this.timerSync = null;
+    this.lastTimerText = '';
+
+    // Tutorial gating: takeoff waits until the tutorial is dismissed
+    this.pendingTakeoffShip = null;
 
     // Death state (shot down — server controls respawn)
     this.dead = false;
@@ -261,8 +283,6 @@ class Game {
     const usernameInput = document.getElementById('username-input');
     const loginScreen = document.getElementById('login-screen');
     const hud = document.getElementById('hud');
-    const tutorial = document.getElementById('tutorial');
-    const tutorialClose = document.getElementById('tutorial-close');
     const chatInput = document.getElementById('chat-input');
 
     startButton.addEventListener('click', () => {
@@ -275,26 +295,16 @@ class Game {
       this.connectToServer(username);
       loginScreen.style.display = 'none';
       hud.style.display = 'block';
-      if (!localStorage.getItem('tutorialSeen')) {
-        tutorial.style.display = 'block';
-        localStorage.setItem('tutorialSeen', 'true');
-      }
     });
 
     usernameInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') startButton.click();
     });
 
-    tutorialClose.addEventListener('click', () => {
-      tutorial.style.display = 'none';
-    });
+    document.getElementById('tutorial-close').addEventListener('click', () => this.closeTutorial());
 
-    document.addEventListener('keydown', (e) => {
-      if (tutorial.style.display === 'block' && (e.key === 'Escape' || e.key === 'Enter')) {
-        tutorial.style.display = 'none';
-        e.preventDefault();
-      }
-    });
+    const endButton = document.getElementById('end-restart');
+    if (endButton) endButton.addEventListener('click', () => window.location.reload());
 
     chatInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
@@ -305,6 +315,20 @@ class Game {
         }
       }
     });
+  }
+
+  /**
+   * Dismisses the tutorial and, on a first run, starts the takeoff that
+   * was held back so new players read the controls while safely parked.
+   */
+  closeTutorial() {
+    const tutorial = document.getElementById('tutorial');
+    if (tutorial) tutorial.style.display = 'none';
+    if (this.pendingTakeoffShip) {
+      const ship = this.pendingTakeoffShip;
+      this.pendingTakeoffShip = null;
+      this.startTakeoff(ship);
+    }
   }
 
   isValidUsername(username) {
@@ -861,7 +885,9 @@ class Game {
         if (ship) {
           const dx = ship.position.x - p.x;
           const dz = ship.position.z - p.z;
-          if (dx * dx + dz * dz < GAME_CONFIG.PICKUP_RADIUS * GAME_CONFIG.PICKUP_RADIUS) {
+          const dy = ship.position.y - GAME_CONFIG.FLIGHT_HEIGHT; // rings float at flight height
+          if (dx * dx + dz * dz < GAME_CONFIG.PICKUP_RADIUS * GAME_CONFIG.PICKUP_RADIUS &&
+              Math.abs(dy) < 14) {
             p.active = false;
             p.mesh.visible = false;
             this.collectPowerup(p.type);
@@ -1487,10 +1513,71 @@ class Game {
         continue;
       }
       const t = p.userData.life / p.userData.maxLife;
-      p.material.opacity = t * 0.6;
-      p.scale.setScalar(1 + (1 - t) * 2.5);
+      if (p.userData.isFlash) {
+        p.material.opacity = t * 0.9;
+        p.scale.setScalar(1 + (1 - t) * 9);
+      } else {
+        p.material.opacity = t * 0.6;
+        p.scale.setScalar(1 + (1 - t) * 2.5);
+      }
+      if (p.userData.grav) p.userData.vel.y -= 55 * delta;
       p.position.addScaledVector(p.userData.vel, delta);
     }
+  }
+
+  /**
+   * Fireball + debris burst at a kill site — the payoff moment
+   */
+  spawnExplosion(position) {
+    // Expanding flash core
+    const flash = new THREE.Mesh(
+      new THREE.SphereGeometry(1.5, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xFFDD66, transparent: true, opacity: 0.9 })
+    );
+    flash.position.copy(position);
+    flash.userData = {
+      vel: new THREE.Vector3(), life: 0.28, maxLife: 0.28, isFlash: true,
+    };
+    this.scene.add(flash);
+    this.smokeParticles.push(flash);
+
+    // Debris and fire chunks with gravity
+    const colors = [0xFF5500, 0xFF8800, 0xFFAA00, 0x333333, 0x666666];
+    for (let i = 0; i < 26; i++) {
+      const size = 0.4 + Math.random() * 0.9;
+      const p = new THREE.Mesh(
+        new THREE.SphereGeometry(size, 5, 4),
+        new THREE.MeshBasicMaterial({ color: colors[i % colors.length], transparent: true, opacity: 0.95 })
+      );
+      p.position.copy(position);
+      const a = Math.random() * Math.PI * 2;
+      const b = (Math.random() - 0.3) * Math.PI;
+      const spd = 12 + Math.random() * 26;
+      const life = 0.5 + Math.random() * 0.6;
+      p.userData = {
+        vel: new THREE.Vector3(
+          Math.cos(a) * Math.cos(b) * spd,
+          Math.sin(b) * spd + 8,
+          Math.sin(a) * Math.cos(b) * spd
+        ),
+        life, maxLife: life, grav: true,
+      };
+      this.scene.add(p);
+      this.smokeParticles.push(p);
+    }
+
+    // Audible if it happened anywhere near the player
+    const my = this.localPlayer && this.players.get(this.localPlayer.id);
+    if (!my || my.position.distanceTo(position) < 450) this.playSound('explosion');
+  }
+
+  /**
+   * Kicks off a decaying camera shake (magnitude in world units)
+   */
+  shake(magnitude, duration) {
+    this.shakeMag = magnitude;
+    this.shakeDur = duration;
+    this.shakeTime = duration;
   }
 
   // =========================================================================
@@ -1940,6 +2027,7 @@ class Game {
         this.takeoffPhase = null;
         this.controlsEnabled = true;
         ship.rotation.x = 0;
+        this.pitchAngle = 0;
         ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
 
         if (overlay) overlay.style.display = 'none';
@@ -1964,6 +2052,24 @@ class Game {
       this.cloudGroup.position.z = ship.position.z;
     }
     this.updateChunks(ship.position.x, ship.position.z);
+  }
+
+  /**
+   * Space during the takeoff roll jumps straight to cruise
+   */
+  skipTakeoff() {
+    if (!this.takeoffPhase || !this.localPlayer) return;
+    const ship = this.players.get(this.localPlayer.id);
+    if (!ship) return;
+
+    this.takeoffPhase = null;
+    this.controlsEnabled = true;
+    ship.rotation.x = 0;
+    this.pitchAngle = 0;
+    ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
+
+    const overlay = document.getElementById('takeoff-overlay');
+    if (overlay) overlay.style.display = 'none';
   }
 
   // =========================================================================
@@ -2101,18 +2207,24 @@ class Game {
   }
 
   fireProjectile(ship) {
+    // Fire along the nose, including climb/dive pitch
+    const cp = Math.cos(this.pitchAngle);
+    const sp = Math.sin(this.pitchAngle);
+    const dir = {
+      x: -Math.sin(this.shipRotation) * cp,
+      y: sp,
+      z: -Math.cos(this.shipRotation) * cp,
+    };
+
     const projectile = this.createProjectile();
     const spawnDist = 8;
     projectile.position.set(
-      ship.position.x - Math.sin(this.shipRotation) * spawnDist,
-      ship.position.y,
-      ship.position.z - Math.cos(this.shipRotation) * spawnDist
+      ship.position.x + dir.x * spawnDist,
+      ship.position.y + dir.y * spawnDist,
+      ship.position.z + dir.z * spawnDist
     );
-    projectile.velocity = new THREE.Vector3(
-      -Math.sin(this.shipRotation) * GAME_CONFIG.PROJECTILE_SPEED,
-      0,
-      -Math.cos(this.shipRotation) * GAME_CONFIG.PROJECTILE_SPEED
-    );
+    projectile.velocity = new THREE.Vector3(dir.x, dir.y, dir.z)
+      .multiplyScalar(GAME_CONFIG.PROJECTILE_SPEED);
     const projectileId = `${this.localPlayer.id}_${Date.now()}`;
     this.scene.add(projectile);
     this.projectiles.set(projectileId, projectile);
@@ -2122,7 +2234,7 @@ class Game {
       this.socket.emit('fireProjectile', {
         gameId: this.gameState?.id,
         position: projectile.position,
-        direction: { x: -Math.sin(this.shipRotation), y: 0, z: -Math.cos(this.shipRotation) },
+        direction: dir,
         projectileId,
       });
     }
@@ -2169,6 +2281,7 @@ class Game {
       this.socket.on('gameJoined', (data) => {
         this.gameState = data.gameState;
         this.localPlayer = data.player;
+        this.syncTimer(data.gameState.timeRemaining);
 
         const myColor = this.getPlayerColor(data.player.id);
         const ship = this.createPlayerShip(myColor);
@@ -2177,16 +2290,31 @@ class Game {
         this.createTrail(data.player.id);
         this.playerHealth = 100;
 
-        // Start takeoff sequence
-        this.startTakeoff(ship);
+        // First run: park on the runway and show the tutorial; takeoff
+        // starts when it's dismissed. Repeat visits take off immediately.
+        if (!localStorage.getItem('tutorialSeen')) {
+          localStorage.setItem('tutorialSeen', 'true');
+          ship.position.set(0, 1, GAME_CONFIG.RUNWAY_LENGTH / 2 - 10);
+          ship.rotation.set(0, 0, 0);
+          this.shipRotation = 0;
+          this.pendingTakeoffShip = ship;
+          this.camera.position.set(ship.position.x, 9, ship.position.z + 14);
+          this.camera.lookAt(ship.position);
+          const tutorial = document.getElementById('tutorial');
+          if (tutorial) tutorial.style.display = 'block';
+        } else {
+          this.startTakeoff(ship);
+        }
+
+        this.showTeamBanner(this.localPlayer.team);
 
         if (data.gameState.players) {
           data.gameState.players.forEach(player => {
-            if (player.id !== this.localPlayer.id) {
+            if (player.id !== this.localPlayer.id && !this.players.has(player.id)) {
               const otherColor = this.getPlayerColor(player.id);
               const otherShip = this.createPlayerShip(otherColor);
               otherShip.position.copy(player.position);
-              otherShip.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
+              if (!player.position.y) otherShip.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
               this.scene.add(otherShip);
               this.players.set(player.id, otherShip);
               this.createTrail(player.id);
@@ -2206,15 +2334,16 @@ class Game {
       });
 
       this.socket.on('playerJoined', (player) => {
-        if (player && player.id) {
+        if (player && player.id && !this.players.has(player.id)) {
           const playerColor = this.getPlayerColor(player.id);
           const ship = this.createPlayerShip(playerColor);
           ship.position.copy(player.position);
-          ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
+          if (!player.position.y) ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
           this.scene.add(ship);
           this.players.set(player.id, ship);
           this.createTrail(player.id);
-          if (this.gameState && this.gameState.players) {
+          if (this.gameState && this.gameState.players &&
+              !this.gameState.players.some(p => p.id === player.id)) {
             this.gameState.players.push(player);
           }
           this.updateHUD();
@@ -2237,9 +2366,18 @@ class Game {
       this.socket.on('playerMoved', (data) => {
         if (data && data.id) {
           const ship = this.players.get(data.id);
-          if (ship && data.position && data.rotation) {
-            ship.position.copy(data.position);
-            ship.rotation.copy(data.rotation);
+          if (ship && data.position) {
+            // Store as a smoothing target; animate() lerps toward it so
+            // remote planes glide instead of teleporting between updates.
+            // Rotation arrives either as a serialized Euler (_x/_y/_z from
+            // human clients) or a plain object (bots).
+            const r = data.rotation || {};
+            ship.userData.netPos = data.position;
+            ship.userData.netRot = {
+              x: r._x !== undefined ? r._x : (r.x || 0),
+              y: r._y !== undefined ? r._y : (r.y || 0),
+              z: r._z !== undefined ? r._z : (r.z || 0),
+            };
           }
         }
       });
@@ -2268,12 +2406,31 @@ class Game {
           }
         }
 
+        // Kill: explosion at the victim, ship hidden until respawn
+        const victimShip = this.players.get(data.targetId);
+        if (data.killed && victimShip) {
+          this.spawnExplosion(victimShip.position);
+          victimShip.visible = false;
+        }
+
+        // Shooter feedback: hitmarker + confirm sound, banner on kill
+        if (data.attackerId === this.localPlayer?.id) {
+          this.showHitmarker(data.killed);
+          this.playSound(data.killed ? 'kill' : 'hitconfirm');
+          if (data.killed) this.showKillBanner(this.nameOf(data.targetId));
+        }
+
+        if (data.killed) {
+          this.addKillFeed(this.nameOf(data.attackerId), this.nameOf(data.targetId));
+        }
+
         if (data.targetId === this.localPlayer?.id) {
           this.playerHealth = typeof data.targetHealth === 'number'
             ? data.targetHealth
             : Math.max(0, this.playerHealth - data.damage);
           this.setHealthBar(this.playerHealth);
           this.playSound(data.killed ? 'explosion' : 'hit');
+          this.shake(data.killed ? 1.2 : 0.35, data.killed ? 0.8 : 0.3);
           if (data.killed) this.handleLocalDeath();
         }
 
@@ -2297,6 +2454,7 @@ class Game {
         if (data.gameState && this.gameState) {
           this.gameState.scores = data.gameState.scores;
           this.gameState.timeRemaining = data.gameState.timeRemaining;
+          this.syncTimer(data.gameState.timeRemaining);
         }
         this.updateHUD();
       });
@@ -2305,6 +2463,9 @@ class Game {
         const ship = this.players.get(data.playerId);
         if (ship) {
           ship.position.set(data.position.x, GAME_CONFIG.FLIGHT_HEIGHT, data.position.z);
+          ship.visible = true;
+          delete ship.userData.netPos;
+          delete ship.userData.netRot;
         }
         if (data.playerId === this.localPlayer?.id) {
           this.dead = false;
@@ -2325,6 +2486,22 @@ class Game {
       this.socket.on('gameStart', (gameState) => { this.gameState = gameState; this.updateHUD(); });
       this.socket.on('gameEnd', (gameState) => { this.gameState = gameState; this.showGameEnd(); });
       this.socket.on('error', (error) => console.error('Socket error:', error));
+
+      // Authoritative health after crashes (server applies the damage)
+      this.socket.on('healthUpdate', (data) => {
+        if (typeof data?.health !== 'number') return;
+        this.playerHealth = data.health;
+        this.setHealthBar(data.health);
+        if (data.died) {
+          this.dead = true;
+          const overlay = document.getElementById('crash-overlay');
+          if (overlay) {
+            const text = overlay.querySelector('.crash-text');
+            if (text) text.textContent = 'DESTROYED!';
+            overlay.style.display = 'flex';
+          }
+        }
+      });
 
       // Windmill capture updates from server
       this.socket.on('windmillUpdate', (data) => {
@@ -2435,6 +2612,25 @@ class Game {
         gain.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
         osc.start(t); osc.stop(t + 0.65);
         break;
+      case 'hitconfirm':
+        // Crisp high tick — "your shot landed"
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1300, t);
+        osc.frequency.exponentialRampToValueAtTime(1800, t + 0.05);
+        gain.gain.setValueAtTime(0.16, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+        osc.start(t); osc.stop(t + 0.07);
+        break;
+      case 'kill':
+        // Rising three-note fanfare
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(523, t);
+        osc.frequency.setValueAtTime(659, t + 0.08);
+        osc.frequency.setValueAtTime(1047, t + 0.16);
+        gain.gain.setValueAtTime(0.15, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+        osc.start(t); osc.stop(t + 0.35);
+        break;
     }
   }
 
@@ -2537,6 +2733,78 @@ class Game {
   // HUD & UI
   // =========================================================================
 
+  /**
+   * Looks up a display name from the current roster
+   */
+  nameOf(playerId) {
+    const p = this.gameState?.players?.find(pl => pl.id === playerId);
+    return p ? p.username : 'Pilot';
+  }
+
+  /**
+   * Records when the server last told us the remaining time so the HUD
+   * can count down smoothly between updates
+   */
+  syncTimer(remainingMs) {
+    if (typeof remainingMs !== 'number') return;
+    this.timerSync = { remaining: remainingMs, at: performance.now() };
+  }
+
+  /**
+   * Counts the match clock down every frame (called from animate)
+   */
+  updateTimer() {
+    if (!this.timerSync) return;
+    const el = document.getElementById('time-remaining');
+    if (!el) return;
+    const remaining = Math.max(0, this.timerSync.remaining - (performance.now() - this.timerSync.at));
+    const minutes = Math.floor(remaining / 60000);
+    const seconds = Math.floor((remaining % 60000) / 1000);
+    const text = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    if (text !== this.lastTimerText) {
+      this.lastTimerText = text;
+      el.textContent = text;
+      el.classList.toggle('low', remaining < 31000);
+    }
+  }
+
+  showHitmarker(killed) {
+    const el = document.getElementById('hitmarker');
+    if (!el) return;
+    el.classList.remove('show', 'kill');
+    void el.offsetWidth; // restart the CSS animation
+    el.classList.add('show');
+    if (killed) el.classList.add('kill');
+  }
+
+  addKillFeed(attackerName, victimName) {
+    const feed = document.getElementById('kill-feed');
+    if (!feed) return;
+    const entry = document.createElement('div');
+    entry.className = 'kill-entry';
+    entry.innerHTML = `<span>${this.sanitizeInput(attackerName)}</span> &#9992; <span>${this.sanitizeInput(victimName)}</span>`;
+    feed.prepend(entry);
+    while (feed.children.length > 4) feed.removeChild(feed.lastChild);
+    setTimeout(() => { if (entry.parentNode) entry.parentNode.removeChild(entry); }, 4500);
+  }
+
+  showKillBanner(victimName) {
+    const el = document.getElementById('kill-banner');
+    if (!el) return;
+    el.textContent = `SPLASH! You shot down ${victimName}`;
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
+  }
+
+  showTeamBanner(team) {
+    const el = document.getElementById('team-banner');
+    if (!el || !team) return;
+    el.textContent = `YOU'RE ON THE ${team.toUpperCase()} TEAM`;
+    el.className = `show ${team}`;
+    setTimeout(() => { el.className = ''; }, 3500);
+  }
+
   displayChatMessage(username, message) {
     const chatMessages = document.getElementById('chat-messages');
     if (!chatMessages) return;
@@ -2546,13 +2814,6 @@ class Game {
     chatMessages.appendChild(el);
     chatMessages.scrollTop = chatMessages.scrollHeight;
     while (chatMessages.children.length > 50) chatMessages.removeChild(chatMessages.firstChild);
-  }
-
-  updateHealth(damage) {
-    const healthFill = document.querySelector('.health-fill');
-    if (!healthFill) return;
-    const currentWidth = parseFloat(healthFill.style.width) || 100;
-    healthFill.style.width = `${Math.max(0, currentWidth - damage)}%`;
   }
 
   setHealthBar(health) {
@@ -2594,36 +2855,67 @@ class Game {
 
     const killsEl = document.getElementById('kills');
     const deathsEl = document.getElementById('deaths');
-    const assistsEl = document.getElementById('assists');
-    const timeRemainingEl = document.getElementById('time-remaining');
     const playerListEl = document.getElementById('player-list');
 
     if (killsEl) killsEl.textContent = this.localPlayer.kills || 0;
     if (deathsEl) deathsEl.textContent = this.localPlayer.deaths || 0;
-    if (assistsEl) assistsEl.textContent = this.localPlayer.assists || 0;
 
-    if (timeRemainingEl && typeof this.gameState.timeRemaining === 'number') {
-      const minutes = Math.floor(this.gameState.timeRemaining / 60000);
-      const seconds = Math.floor((this.gameState.timeRemaining % 60000) / 1000);
-      timeRemainingEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    // Team score bar
+    const scores = this.gameState.scores || { red: 0, blue: 0 };
+    const redEl = document.getElementById('score-red');
+    const blueEl = document.getElementById('score-blue');
+    if (redEl) {
+      redEl.textContent = `RED ${scores.red}`;
+      redEl.classList.toggle('mine', this.localPlayer.team === 'red');
+    }
+    if (blueEl) {
+      blueEl.textContent = `${scores.blue} BLUE`;
+      blueEl.classList.toggle('mine', this.localPlayer.team === 'blue');
     }
 
     if (playerListEl && this.gameState.players) {
       playerListEl.innerHTML = this.gameState.players.map(p => {
         const color = this.getPlayerColor(p.id);
         const hex = '#' + color.toString(16).padStart(6, '0');
+        const teamColor = p.team === 'red' ? '#ff5555' : '#5599ff';
         const isYou = p.id === this.localPlayer.id ? ' (You)' : '';
         const name = this.sanitizeInput(p.username || 'Pilot');
-        return `<div style="color:${hex}; margin: 2px 0;">&#9992; ${name}${isYou} - K:${p.kills || 0} D:${p.deaths || 0}</div>`;
+        return `<div style="color:${hex}; margin: 2px 0;"><span style="color:${teamColor}">&#9679;</span> &#9992; ${name}${isYou} - K:${p.kills || 0} D:${p.deaths || 0}</div>`;
       }).join('');
     }
   }
 
   showGameEnd() {
-    if (!this.gameState || !this.gameState.scores) return;
-    const winner = this.gameState.scores.red > this.gameState.scores.blue ? 'Red' : 'Blue';
-    alert(`Game Over! ${winner} team wins!\nFinal Score: Red ${this.gameState.scores.red} - Blue ${this.gameState.scores.blue}`);
-    window.location.reload();
+    const overlay = document.getElementById('end-screen');
+    if (!overlay || !this.gameState) return;
+
+    const scores = this.gameState.scores || { red: 0, blue: 0 };
+    const winner = scores.red > scores.blue ? 'red' : scores.blue > scores.red ? 'blue' : null;
+    const myTeam = this.localPlayer?.team;
+
+    const title = document.getElementById('end-title');
+    if (title) {
+      if (!winner) {
+        title.textContent = "IT'S A DRAW!";
+        title.className = '';
+      } else {
+        title.textContent = winner === myTeam ? 'VICTORY!' : 'DEFEAT';
+        title.className = winner;
+      }
+    }
+
+    const scoreEl = document.getElementById('end-score');
+    if (scoreEl) scoreEl.innerHTML =
+      `<span class="red">RED ${scores.red}</span> &mdash; <span class="blue">${scores.blue} BLUE</span>`;
+
+    const statsEl = document.getElementById('end-stats');
+    if (statsEl && this.localPlayer) {
+      statsEl.textContent =
+        `You: ${this.localPlayer.kills || 0} kills / ${this.localPlayer.deaths || 0} deaths`;
+    }
+
+    this.controlsEnabled = false;
+    overlay.style.display = 'flex';
   }
 
   // =========================================================================
@@ -2647,6 +2939,23 @@ class Game {
       return;
     }
 
+    // Tutorial open: Enter/Escape/Space dismisses it (and starts takeoff)
+    const tutorial = document.getElementById('tutorial');
+    if (tutorial && tutorial.style.display === 'block') {
+      if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') {
+        this.closeTutorial();
+        event.preventDefault();
+      }
+      return;
+    }
+
+    // Space skips the takeoff cinematic
+    if (this.takeoffPhase && event.key === ' ') {
+      this.skipTakeoff();
+      event.preventDefault();
+      return;
+    }
+
     // Focus chat input on Enter
     if (event.key === 'Enter' && chatInput) {
       chatInput.focus();
@@ -2655,16 +2964,14 @@ class Game {
     }
 
     switch (event.key.toLowerCase()) {
-      case 'w': this.controls.forward = true; break;
-      case 's': this.controls.backward = true; break;
-      case 'a': this.controls.left = true; break;
-      case 'd': this.controls.right = true; break;
+      case 'w': this.controls.throttleUp = true; break;
+      case 's': this.controls.throttleDown = true; break;
+      case 'a': case 'q': case 'arrowleft': this.controls.left = true; event.preventDefault(); break;
+      case 'd': case 'e': case 'arrowright': this.controls.right = true; event.preventDefault(); break;
+      case 'arrowup': this.controls.pitchUp = true; event.preventDefault(); break;
+      case 'arrowdown': this.controls.pitchDown = true; event.preventDefault(); break;
       case 'shift': this.controls.boost = true; break;
       case ' ': this.controls.shooting = true; event.preventDefault(); break;
-      case 'q': case 'arrowleft': this.controls.rotateLeft = true; event.preventDefault(); break;
-      case 'e': case 'arrowright': this.controls.rotateRight = true; event.preventDefault(); break;
-      case 'arrowup': this.controls.throttleUp = true; event.preventDefault(); break;
-      case 'arrowdown': this.controls.throttleDown = true; event.preventDefault(); break;
       case 'r': this.startBarrelRoll(); break;
       case 'm': this.toggleMute(); break;
     }
@@ -2675,16 +2982,14 @@ class Game {
     if (document.activeElement === document.getElementById('chat-input')) return;
 
     switch (event.key.toLowerCase()) {
-      case 'w': this.controls.forward = false; break;
-      case 's': this.controls.backward = false; break;
-      case 'a': this.controls.left = false; break;
-      case 'd': this.controls.right = false; break;
+      case 'w': this.controls.throttleUp = false; break;
+      case 's': this.controls.throttleDown = false; break;
+      case 'a': case 'q': case 'arrowleft': this.controls.left = false; event.preventDefault(); break;
+      case 'd': case 'e': case 'arrowright': this.controls.right = false; event.preventDefault(); break;
+      case 'arrowup': this.controls.pitchUp = false; event.preventDefault(); break;
+      case 'arrowdown': this.controls.pitchDown = false; event.preventDefault(); break;
       case 'shift': this.controls.boost = false; break;
       case ' ': this.controls.shooting = false; event.preventDefault(); break;
-      case 'q': case 'arrowleft': this.controls.rotateLeft = false; event.preventDefault(); break;
-      case 'e': case 'arrowright': this.controls.rotateRight = false; event.preventDefault(); break;
-      case 'arrowup': this.controls.throttleUp = false; event.preventDefault(); break;
-      case 'arrowdown': this.controls.throttleDown = false; event.preventDefault(); break;
     }
   }
 
@@ -2725,33 +3030,26 @@ class Game {
     this.updateEnergyBar(this.localPlayer.energy);
     this.updateSpeedBar(speed);
     this.updateEngineSound(speed);
+    const altEl = document.getElementById('alt-value');
+    if (altEl) altEl.textContent = `${Math.round(ship.position.y * 3)}m`;
 
-    const prevRotation = this.shipRotation;
-
-    // Smooth manual turning (Q/E): turn rate eases toward the input
-    const turnInput = (this.controls.rotateLeft ? 1 : 0) - (this.controls.rotateRight ? 1 : 0);
+    // Banked turning (A/D): turn rate eases toward the input
+    const turnInput = (this.controls.left ? 1 : 0) - (this.controls.right ? 1 : 0);
     const targetTurnRate = turnInput * GAME_CONFIG.TURN_RATE;
     const turnSmooth = Math.min(1, GAME_CONFIG.TURN_SMOOTHING * delta);
     this.rotationVelocity += (targetTurnRate - this.rotationVelocity) * turnSmooth;
     this.shipRotation += this.rotationVelocity * delta;
-
-    // Orient the nose toward the WASD movement direction. S is excluded so
-    // reversing doesn't flip the plane around.
-    const orientFwd = this.controls.forward ? 1 : 0;
-    const orientLat = (this.controls.left ? 1 : 0) - (this.controls.right ? 1 : 0);
-    if (orientLat !== 0 || orientFwd !== 0) {
-      const headingOffset = Math.atan2(orientLat, orientFwd); // relative to current facing
-      this.shipRotation += headingOffset * Math.min(1, GAME_CONFIG.ORIENT_SMOOTHING * delta);
-    }
     ship.rotation.y = this.shipRotation;
 
-    // Bank into the turn — roll proportional to the total turn rate this
-    // frame (manual Q/E turning plus WASD orientation combined)
-    let frameTurn = this.shipRotation - prevRotation;
-    frameTurn = Math.atan2(Math.sin(frameTurn), Math.cos(frameTurn)); // wrap to [-π, π]
-    const frameTurnRate = delta > 0 ? frameTurn / delta : 0;
-    const clampedRate = Math.max(-GAME_CONFIG.TURN_RATE, Math.min(GAME_CONFIG.TURN_RATE, frameTurnRate));
-    const targetBank = (clampedRate / GAME_CONFIG.TURN_RATE) * GAME_CONFIG.MAX_BANK_ANGLE;
+    // Climb & dive (↑/↓): pitch eases toward input; vertical speed scales
+    // with airspeed so boosting dives feel fast
+    const pitchInput = (this.controls.pitchUp ? 1 : 0) - (this.controls.pitchDown ? 1 : 0);
+    const targetPitch = pitchInput * GAME_CONFIG.MAX_PITCH;
+    this.pitchAngle += (targetPitch - this.pitchAngle) * Math.min(1, GAME_CONFIG.PITCH_SMOOTHING * delta);
+    ship.rotation.x = -this.pitchAngle; // negative x = nose up
+
+    // Bank into the turn — roll proportional to the smoothed turn rate
+    const targetBank = (this.rotationVelocity / GAME_CONFIG.TURN_RATE) * GAME_CONFIG.MAX_BANK_ANGLE;
     const bankSmooth = Math.min(1, GAME_CONFIG.BANK_SMOOTHING * delta);
 
     // Barrel roll overrides banking: full 360° roll + sideways dodge
@@ -2768,26 +3066,14 @@ class Game {
       ship.rotation.z += (targetBank - ship.rotation.z) * bankSmooth;
     }
 
-    const movement = new THREE.Vector3();
-    if (this.controls.forward) {
-      movement.x -= Math.sin(this.shipRotation) * speed * delta;
-      movement.z -= Math.cos(this.shipRotation) * speed * delta;
-    }
-    if (this.controls.backward) {
-      movement.x += Math.sin(this.shipRotation) * speed * delta;
-      movement.z += Math.cos(this.shipRotation) * speed * delta;
-    }
-    if (this.controls.left) {
-      movement.x -= Math.cos(this.shipRotation) * speed * delta;
-      movement.z += Math.sin(this.shipRotation) * speed * delta;
-    }
-    if (this.controls.right) {
-      movement.x += Math.cos(this.shipRotation) * speed * delta;
-      movement.z -= Math.sin(this.shipRotation) * speed * delta;
-    }
+    // Always flying forward — planes don't hover. W/S trim the throttle.
+    ship.position.x -= Math.sin(this.shipRotation) * speed * delta;
+    ship.position.z -= Math.cos(this.shipRotation) * speed * delta;
+    ship.position.y += Math.sin(this.pitchAngle) * speed * delta;
+    ship.position.y = Math.max(GAME_CONFIG.MIN_ALTITUDE,
+      Math.min(GAME_CONFIG.MAX_ALTITUDE, ship.position.y));
 
-    ship.position.add(movement);
-    ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
+    if (this.crashGrace > 0) this.crashGrace -= delta;
 
     // Update contrail
     this.updateTrail(this.localPlayer.id, ship.position);
@@ -2865,6 +3151,15 @@ class Game {
     const camRoll = Math.max(-0.7, Math.min(0.7, ship.rotation.z)) * 0.35;
     this.camera.rotateZ(camRoll);
 
+    // Impact shake: decaying random camera offset
+    if (this.shakeTime > 0) {
+      this.shakeTime = Math.max(0, this.shakeTime - delta);
+      const s = this.shakeMag * (this.shakeTime / this.shakeDur);
+      this.camera.position.x += (Math.random() - 0.5) * s * 2;
+      this.camera.position.y += (Math.random() - 0.5) * s * 2;
+      this.camera.position.z += (Math.random() - 0.5) * s * 2;
+    }
+
     // Shadow frustum follows the player so shadows stay crisp everywhere
     if (this.sunLight) {
       this.sunLight.position.set(ship.position.x + 120, 180, ship.position.z + 80);
@@ -2873,7 +3168,7 @@ class Game {
   }
 
   checkCollisions(ship) {
-    if (this.crashed) return;
+    if (this.crashed || this.crashGrace > 0) return;
     const px = ship.position.x;
     const py = ship.position.y;
     const pz = ship.position.z;
@@ -2895,22 +3190,42 @@ class Game {
 
   triggerCrash(ship) {
     this.crashed = true;
+    this.shake(0.9, 0.5);
+    this.spawnExplosion(ship.position);
+
     const overlay = document.getElementById('crash-overlay');
-    if (overlay) overlay.style.display = 'flex';
-    this.updateHealth(GAME_CONFIG.CRASH_HEALTH_PENALTY);
+    if (overlay) {
+      const text = overlay.querySelector('.crash-text');
+      if (text) text.textContent = 'CRASHED!';
+      overlay.style.display = 'flex';
+    }
+
+    // Real damage, kept in sync with the server (which can rule it fatal)
+    this.playerHealth = Math.max(0, this.playerHealth - GAME_CONFIG.CRASH_HEALTH_PENALTY);
+    this.setHealthBar(this.playerHealth);
+    if (this.socket && this.isConnected) {
+      try {
+        this.socket.emit('crashDamage', { gameId: this.gameState?.id });
+      } catch (error) {
+        console.error('Error reporting crash:', error);
+      }
+    }
 
     setTimeout(() => {
       this.crashed = false;
+      if (this.dead) return; // fatal crash — the server respawn takes over
       if (overlay) overlay.style.display = 'none';
-      ship.position.x += (Math.random() - 0.5) * 60;
-      ship.position.z += (Math.random() - 0.5) * 60;
-      ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
+      // Resume well above every obstacle, with brief collision immunity
+      ship.position.y = GAME_CONFIG.RESPAWN_ALTITUDE;
+      this.pitchAngle = 0;
+      this.crashGrace = GAME_CONFIG.CRASH_GRACE;
     }, GAME_CONFIG.CRASH_DURATION);
   }
 
   animate() {
     requestAnimationFrame(this.animate.bind(this));
-    const delta = this.clock.getDelta();
+    // Clamp delta so a backgrounded tab doesn't teleport the plane on return
+    const delta = Math.min(this.clock.getDelta(), 0.1);
     this.animationTime += delta;
 
     // Global systems (always update)
@@ -2918,6 +3233,7 @@ class Game {
     this.updateSmokeParticles(delta);
     this.updateCaptureWindmills(delta);
     this.updateAmbient(delta);
+    this.updateTimer();
 
     // Takeoff sequence
     if (this.takeoffPhase) {
@@ -2947,6 +3263,23 @@ class Game {
     // Animate other players
     this.players.forEach((ship, id) => {
       if (id !== this.localPlayer?.id) {
+        // Glide toward the latest network position/rotation so remote
+        // planes (bots update at 10Hz) move smoothly between packets
+        if (ship.userData.netPos) {
+          const t = 1 - Math.exp(-10 * delta);
+          const np = ship.userData.netPos;
+          ship.position.x += (np.x - ship.position.x) * t;
+          ship.position.y += ((np.y || GAME_CONFIG.FLIGHT_HEIGHT) - ship.position.y) * t;
+          ship.position.z += (np.z - ship.position.z) * t;
+          const nr = ship.userData.netRot;
+          if (nr) {
+            ship.rotation.x += (nr.x - ship.rotation.x) * t;
+            let dy = nr.y - ship.rotation.y;
+            dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+            ship.rotation.y += dy * t;
+            ship.rotation.z += (nr.z - ship.rotation.z) * t;
+          }
+        }
         if (ship.userData.leftAB) {
           const s = 0.8 + Math.sin(this.animationTime * 15 + id.length) * 0.3;
           ship.userData.leftAB.scale.setScalar(s);
@@ -2956,8 +3289,8 @@ class Game {
           const b = 0.8 + Math.sin(this.animationTime * 5 + id.length * 0.5) * 0.7;
           ship.userData.navLights.forEach(light => { light.material.emissiveIntensity = b; });
         }
-        // Update contrail for other players
-        this.updateTrail(id, ship.position);
+        // Update contrail for other players (skip while shot down/hidden)
+        if (ship.visible) this.updateTrail(id, ship.position);
       }
     });
 

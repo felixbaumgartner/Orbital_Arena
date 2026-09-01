@@ -1,16 +1,18 @@
-# Orbital Arena
+# Orbital Arena — Dutch Village Flight
 
-A multiplayer space combat game where players battle in zero-gravity arenas.
+A multiplayer flight-combat game over an endless, living Dutch landscape: tulip fields, canals, brick villages, windmills and wind farms. Capture windmills with your team and shoot down rival pilots (AI bots fill empty seats).
 
 ## Features
 
-- Real-time multiplayer space combat
-- Zero-gravity movement mechanics
-- Team-based gameplay
-- Energy management system
-- In-game chat
-- Respawn system
-- Match duration and scoring
+- Real-time multiplayer dogfights (Socket.IO) with AI bots
+- Infinite procedurally generated terrain with village, farmland and waterland biomes
+- Full day/night cycle: moving sun, golden hour, starry nights, moon, lit windows and street lamps
+- Dynamic weather with drifting clouds, cloud shadows, rain, fog and lightning storms
+- Procedural textures (grass, soil, brick, roof tiles, asphalt, water) — no image assets
+- Post-processing bloom and four graphics quality presets
+- Cockpit HUD: compass tape with objective bearings, artificial horizon, terrain warning, radar
+- Capture-the-windmill objective mode, tulip power-ups, barrel rolls
+- Photo mode with screenshot capture, landmark discovery toasts, in-game chat
 
 ## Getting Started
 
@@ -27,17 +29,21 @@ A multiplayer space combat game where players battle in zero-gravity arenas.
 
 ## Controls
 
-- WASD: Movement
-- Mouse: Aim
-- Left Click: Shoot
-- Space: Boost
-- Shift: Brake
-- T: Open chat
-- ESC: Menu
+- A / D: Bank left and right
+- ↑ / ↓: Climb and dive
+- W / S: Throttle up and down
+- Shift: Boost (drains energy)
+- Space: Shoot
+- R: Barrel roll
+- Esc: Settings (graphics quality, bloom, time of day, FPS counter)
+- P: Photo mode (cinematic orbit, HUD hidden)
+- C: Save a screenshot
+- M: Mute
+- Enter: Chat
 
 ## Development
 
-- Built with Three.js for 3D rendering
+- Built with Three.js for 3D rendering (client code in `src/client`, scenery systems in `src/client/scenery`, HUD widgets in `src/client/ui`)
 - Socket.IO for real-time multiplayer
 - Express for the server
 - Webpack for bundling

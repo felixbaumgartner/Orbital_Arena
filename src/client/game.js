@@ -1,6 +1,15 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { io } from 'socket.io-client';
+import { TextureFactory } from './scenery/textures.js';
+import { SkySystem } from './scenery/sky.js';
+import { CloudSystem } from './scenery/clouds.js';
+import {
+  ChunkBatch, createSharedMaterials, addTree, addHouse, addTerrace, addLamp, addFence,
+  makeRoad, makeCar, addTurbine, createHorizonRing, makeFlowerField, gableGeometry,
+} from './scenery/props.js';
+import { PostFX } from './postfx.js';
+import { Instruments } from './ui/instruments.js';
 
 // Game constants
 const GAME_CONFIG = {
@@ -94,6 +103,11 @@ const GAME_CONFIG = {
 
   RECONNECT_ATTEMPTS: 5,
   RECONNECT_DELAY: 1000,
+
+  // Environment
+  DAY_CYCLE_MINUTES: 16,      // real minutes per in-game day
+  START_HOUR: 8.5,
+  GROUND_TILE: 24,            // world units per grass texture tile
 };
 
 // Unique vibrant colors for each player
@@ -210,6 +224,33 @@ class Game {
     this.birdAnchor = new THREE.Vector3();
     this.birdAngle = 0;
 
+    // Environment & scenery systems (created in init)
+    this.textures = null;
+    this.mats = null;
+    this.sky = null;
+    this.clouds = null;
+    this.postfx = null;
+    this.instruments = null;
+    this.horizonRing = null;
+    this.cloudShadow = null;
+    this.groundTex = null;
+    this.groundMat = null;
+    this.viewDistance = GAME_CONFIG.VIEW_DISTANCE;
+    this.wind = { angle: Math.random() * Math.PI * 2, speed: 7, targetSpeed: 7, x: 0, z: 0 };
+    this.weatherNow = { fogNear: 320, fogFar: 1000, overcast: 0, rain: 0, cover: 0.3, wind: 7 };
+    this.lightningTimer = 8;
+    this.chunkLandmarks = new Map();
+    this.discovered = new Set();
+    this.visitedBlocks = new Set();
+    this.lastBiomeKey = null;
+    this.photoMode = false;
+    this.photoAngle = 0;
+    this.captureRequested = false;
+    this.pullUpBeep = 0;
+    this.prevAltitude = null;
+    this.verticalSpeed = 0;
+    this.boostVignette = 0;
+
     this.init();
 
     // Debug handle (also used by automated QA)
@@ -218,7 +259,11 @@ class Game {
 
   init() {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+    // Procedural textures and the shared materials every chunk reuses
+    this.textures = new TextureFactory(this.renderer.capabilities.getMaxAnisotropy());
+    this.mats = createSharedMaterials(this.textures);
 
     // Filmic tone mapping: the single biggest "AAA look" switch — rich
     // saturated mids, soft highlight rolloff instead of clipping
@@ -241,6 +286,7 @@ class Game {
     // cool sky / green ground bounce. Contrast comes from the ratio.
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.35);
     this.scene.add(ambientLight);
+    this.ambientLight = ambientLight;
 
     const sunLight = new THREE.DirectionalLight(0xFFE3B3, 1.9);
     sunLight.position.set(120, 180, 80);
@@ -261,8 +307,15 @@ class Game {
 
     const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x5B8C3E, 0.55);
     this.scene.add(hemiLight);
+    this.hemiLight = hemiLight;
 
-    this.createSkyDome();
+    // Sky, clouds and the far horizon
+    this.sky = new SkySystem(this.scene, this.textures, {
+      startHour: GAME_CONFIG.START_HOUR, cycleMinutes: GAME_CONFIG.DAY_CYCLE_MINUTES,
+    });
+    this.clouds = new CloudSystem(this.scene, this.textures);
+    this.horizonRing = createHorizonRing(this.textures);
+    this.scene.add(this.horizonRing);
 
     this.createInfiniteTerrain();
     this.createBirdFlock();
@@ -274,8 +327,57 @@ class Game {
     document.addEventListener('keydown', this.onKeyDown.bind(this));
     document.addEventListener('keyup', this.onKeyUp.bind(this));
 
+    // HUD instruments, settings and post-processing
+    this.instruments = new Instruments({
+      onSettingsChange: (key, value, settings) => this.onSettingsChange(key, value, settings),
+    });
+    this.postfx = new PostFX(this.renderer, this.scene, this.camera);
+    this.applySettings(this.instruments.settings);
+
     this.setupUI();
     this.animate();
+  }
+
+  onSettingsChange(key, value, settings) {
+    this.applySettings(settings);
+    if (key === 'quality') this.instruments.toast('⚙️', `Graphics: ${value}`, 'Applied');
+  }
+
+  /** Quality presets trade scenery density and effects for frame rate */
+  applySettings(settings) {
+    const dpr = window.devicePixelRatio || 1;
+    const presets = {
+      low:    { pr: 1, shadows: false, shadowSize: 1024, view: 2, clouds: 0.5, bloom: false, cloudShadow: false },
+      medium: { pr: Math.min(dpr, 1.5), shadows: true, shadowSize: 1024, view: 3, clouds: 0.8, bloom: false, cloudShadow: true },
+      high:   { pr: Math.min(dpr, 2), shadows: true, shadowSize: 2048, view: 3, clouds: 1, bloom: true, cloudShadow: true },
+      ultra:  { pr: dpr, shadows: true, shadowSize: 4096, view: 4, clouds: 1.2, bloom: true, cloudShadow: true },
+    };
+    const p = presets[settings.quality] || presets.high;
+
+    this.renderer.setPixelRatio(p.pr);
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.postfx.resize(window.innerWidth, window.innerHeight, p.pr);
+    this.postfx.setBloom(p.bloom && settings.bloom !== false);
+
+    if (this.renderer.shadowMap.enabled !== p.shadows) {
+      this.renderer.shadowMap.enabled = p.shadows;
+      this.scene.traverse(obj => {
+        if (!obj.material) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        mats.forEach(m => { m.needsUpdate = true; });
+      });
+    }
+    if (this.sunLight && this.sunLight.shadow.mapSize.x !== p.shadowSize) {
+      this.sunLight.shadow.mapSize.set(p.shadowSize, p.shadowSize);
+      if (this.sunLight.shadow.map) {
+        this.sunLight.shadow.map.dispose();
+        this.sunLight.shadow.map = null;
+      }
+    }
+    this.viewDistance = p.view;
+    if (this.clouds) this.clouds.setDensity(p.clouds);
+    if (this.cloudShadow) this.cloudShadow.visible = p.cloudShadow;
+    if (this.sky) this.sky.setTimeMode(settings.time || 'auto');
   }
 
   setupUI() {
@@ -363,16 +465,32 @@ class Game {
   // =========================================================================
 
   createInfiniteTerrain() {
-    const grassGeo = new THREE.PlaneGeometry(GAME_CONFIG.GROUND_SIZE, GAME_CONFIG.GROUND_SIZE, 32, 32);
-    const grassMat = new THREE.MeshStandardMaterial({ color: 0x4CAF50, roughness: 0.9 });
+    // Textured meadow that follows the player; the texture offset is
+    // scrolled in world units so the ground never appears to slide
+    this.groundTex = this.textures.grass().clone();
+    this.groundTex.needsUpdate = true;
+    const repeat = GAME_CONFIG.GROUND_SIZE / GAME_CONFIG.GROUND_TILE;
+    this.groundTex.repeat.set(repeat, repeat);
+    const grassGeo = new THREE.PlaneGeometry(GAME_CONFIG.GROUND_SIZE, GAME_CONFIG.GROUND_SIZE, 1, 1);
+    const grassMat = new THREE.MeshStandardMaterial({ map: this.groundTex, roughness: 0.95 });
+    this.groundMat = grassMat;
     this.groundPlane = new THREE.Mesh(grassGeo, grassMat);
     this.groundPlane.rotation.x = -Math.PI / 2;
     this.groundPlane.receiveShadow = true;
     this.scene.add(this.groundPlane);
 
-    this.cloudGroup = new THREE.Group();
-    this.createClouds();
-    this.scene.add(this.cloudGroup);
+    // Cloud shadows: a translucent dark mask drifting over the ground
+    const shadowTex = this.textures.cloudShadow();
+    shadowTex.repeat.set(2.5, 2.5);
+    const shadowMat = new THREE.MeshBasicMaterial({
+      map: shadowTex, color: 0x000000, transparent: true, depthWrite: false, opacity: 0.35,
+    });
+    this.cloudShadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(GAME_CONFIG.GROUND_SIZE, GAME_CONFIG.GROUND_SIZE), shadowMat);
+    this.cloudShadow.rotation.x = -Math.PI / 2;
+    this.cloudShadow.position.y = 0.12;
+    this.cloudShadow.renderOrder = 2;
+    this.scene.add(this.cloudShadow);
 
     this.updateChunks(0, 0);
   }
@@ -400,8 +518,8 @@ class Game {
 
     // LOD: full detail within 2 chunks, cheap far-ring silhouettes beyond
     const needed = new Map();
-    for (let dx = -GAME_CONFIG.VIEW_DISTANCE; dx <= GAME_CONFIG.VIEW_DISTANCE; dx++) {
-      for (let dz = -GAME_CONFIG.VIEW_DISTANCE; dz <= GAME_CONFIG.VIEW_DISTANCE; dz++) {
+    for (let dx = -this.viewDistance; dx <= this.viewDistance; dx++) {
+      for (let dz = -this.viewDistance; dz <= this.viewDistance; dz++) {
         const ring = Math.max(Math.abs(dx), Math.abs(dz));
         needed.set(`${cx + dx},${cz + dz}`, ring <= 2 ? 'high' : 'low');
       }
@@ -411,19 +529,27 @@ class Game {
       if (!needed.has(key)) this.disposeChunk(key);
     }
 
+    // Build missing chunks nearest-first, a couple per frame, so crossing a
+    // chunk boundary never stalls the frame. The very first fill (and any
+    // teleport that empties the map) builds everything at once.
+    const pending = [];
     for (const [key, lod] of needed) {
       const current = this.chunkLods.get(key);
-      if (!this.chunks.has(key)) {
-        const [x, z] = key.split(',').map(Number);
-        this.generateChunk(x, z, lod);
-      } else if (current === 'low' && lod === 'high') {
-        // Upgrade an approaching far-ring chunk to full detail
-        this.disposeChunk(key);
-        const [x, z] = key.split(',').map(Number);
-        this.generateChunk(x, z, lod);
-      }
+      const [x, z] = key.split(',').map(Number);
+      const ring = Math.max(Math.abs(x - cx), Math.abs(z - cz));
+      if (!this.chunks.has(key)) pending.push({ x, z, lod, ring, upgrade: false });
+      else if (current === 'low' && lod === 'high') pending.push({ x, z, lod, ring, upgrade: true });
       // Downgrades (high chunk drifting into the far ring) are left as-is;
       // they get evicted once out of range.
+    }
+    pending.sort((a, b) => a.ring - b.ring);
+    const budget = this.chunks.size === 0 ? Infinity : 2;
+    let built = 0;
+    for (const p of pending) {
+      if (built >= budget) break;
+      if (p.upgrade) this.disposeChunk(`${p.x},${p.z}`);
+      this.generateChunk(p.x, p.z, p.lod);
+      built++;
     }
   }
 
@@ -435,8 +561,8 @@ class Game {
         obj.traverse(child => {
           if (child.geometry) child.geometry.dispose();
           if (child.material) {
-            if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
-            else child.material.dispose();
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach(m => { if (!m.userData.shared) m.dispose(); });
           }
         });
       });
@@ -446,370 +572,327 @@ class Game {
     this.obstacles.delete(key);
     this.powerups.delete(key);
     this.ambient.delete(key);
+    this.chunkLandmarks.delete(key);
   }
 
   generateChunk(chunkX, chunkZ, lod = 'high') {
     const objects = [];
     const colliders = [];
-    const baseX = chunkX * GAME_CONFIG.CHUNK_SIZE;
-    const baseZ = chunkZ * GAME_CONFIG.CHUNK_SIZE;
+    const batch = new ChunkBatch();
+    const CS = GAME_CONFIG.CHUNK_SIZE;
+    const baseX = chunkX * CS;
+    const baseZ = chunkZ * CS;
     const seed = chunkX * 73856093 + chunkZ * 19349663;
     const biome = this.getBiome(chunkX, chunkZ);
+    const chunkKey = `${chunkX},${chunkZ}`;
+    const rnd = (k) => this.seededRandom(seed + k);
+    const high = lod === 'high';
+    const flowerPatches = [];
 
-    // --- Ground color patches (biome-dependent) ---
-    const groundColors = {
-      village: [0x3D8B37, 0x4CAF50, 0x45A049],
-      farmland: [0x8B9A46, 0xBDB76B, 0xA0C850, 0xDAA520, 0xCD853F, 0x9370DB, 0xE8575A],
-      waterland: [0x5B8C5A, 0x6B8E6B, 0x4A7C59],
-    };
-    const gColors = groundColors[biome];
-
-    // Create 2-4 ground patches per chunk
-    const numPatches = 2 + Math.floor(this.seededRandom(seed + 8000) * 3);
+    // --- Ground tone patches: textured grass and ploughed soil ---
+    const grassTints = [0xC2DDAA, 0xA9CC8E, 0xD6E6BC, 0x9DBF84, 0xB8D49C];
+    const soilTints = [0xB08A5A, 0xC49A6C, 0x9A7A50];
+    const numPatches = 2 + Math.floor(rnd(8000) * 3);
     for (let i = 0; i < numPatches; i++) {
-      const ps = seed + 8000 + i * 50;
-      const pw = 30 + this.seededRandom(ps + 1) * 80;
-      const pd = 30 + this.seededRandom(ps + 2) * 80;
-      const px = baseX + this.seededRandom(ps + 3) * GAME_CONFIG.CHUNK_SIZE;
-      const pz = baseZ + this.seededRandom(ps + 4) * GAME_CONFIG.CHUNK_SIZE;
-      const pc = gColors[Math.floor(this.seededRandom(ps + 5) * gColors.length)];
-
-      const patchGeo = new THREE.PlaneGeometry(pw, pd);
-      const patchMat = new THREE.MeshStandardMaterial({ color: pc, roughness: 0.95 });
-      const patch = new THREE.Mesh(patchGeo, patchMat);
-      patch.rotation.x = -Math.PI / 2;
-      patch.position.set(px, 0.02, pz);
-      this.scene.add(patch);
-      objects.push(patch);
+      const ps = 8000 + i * 50;
+      const pw = 30 + rnd(ps + 1) * 80;
+      const pd = 30 + rnd(ps + 2) * 80;
+      const px = baseX + rnd(ps + 3) * CS;
+      const pz = baseZ + rnd(ps + 4) * CS;
+      const soil = biome === 'farmland' && rnd(ps + 6) < 0.45;
+      const tints = soil ? soilTints : grassTints;
+      batch.add(soil ? 'soil' : 'grassPatch', {
+        geo: new THREE.PlaneGeometry(pw, pd),
+        color: tints[Math.floor(rnd(ps + 5) * tints.length)],
+        rx: -Math.PI / 2, x: px, y: 0.02 + i * 0.003, z: pz,
+      });
     }
-
-    // Detailed scenery only for near (high-LOD) chunks; the far ring keeps
-    // just ground colors, tulip fields, balloons, and landmarks
-    if (lod === 'high') {
 
     // --- BIOME: VILLAGE ---
     if (biome === 'village') {
-      // Buildings
-      const numBuildings = 2 + Math.floor(this.seededRandom(seed) * 3);
-      for (let i = 0; i < numBuildings; i++) {
-        const s = seed + i * 1000;
-        const x = baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE;
-        const z = baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE;
-        const w = 10 + this.seededRandom(s + 3) * 15;
-        const h = 8 + this.seededRandom(s + 4) * 15;
-        const d = 8 + this.seededRandom(s + 5) * 12;
-        const colors = [0xD2691E, 0xCD853F, 0xBC8F8F, 0xA0522D, 0x8B4513, 0xDEB887];
-        const c = colors[Math.floor(this.seededRandom(s + 6) * colors.length)];
+      const axis = rnd(300) > 0.5 ? 'x' : 'z';
+      const along0 = axis === 'x' ? baseX : baseZ;
+      const roadPos = (axis === 'x' ? baseZ : baseX) + 50 + rnd(301) * 100;
+      const place = (along, across) => axis === 'x' ? { x: along, z: across } : { x: across, z: along };
 
-        const wallGeo = new THREE.BoxGeometry(w, h, d);
-        const wallMat = new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 });
-        const walls = new THREE.Mesh(wallGeo, wallMat);
-        walls.position.set(x, h / 2, z);
-        this.scene.add(walls);
-        objects.push(walls);
+      if (high) {
+        const road = makeRoad(this.mats, axis, along0, roadPos, CS);
+        this.scene.add(road);
+        objects.push(road);
 
-        const roofGeo = new THREE.ConeGeometry(w * 0.8, h * 0.4, 4);
-        const roofMat = new THREE.MeshStandardMaterial({ color: 0xB22222, roughness: 0.7 });
-        const roof = new THREE.Mesh(roofGeo, roofMat);
-        roof.position.set(x, h + h * 0.2, z);
-        roof.rotation.y = Math.PI / 4;
-        this.scene.add(roof);
-        objects.push(roof);
+        // Terraces of canal houses facing the street from both sides
+        for (const side of [-1, 1]) {
+          const terraces = 1 + Math.floor(rnd(305 + side) * 2);
+          for (let t = 0; t < terraces; t++) {
+            const along = along0 + 35 + t * 95 + rnd(310 + t * 3 + side) * 35;
+            const across = roadPos + side * 14;
+            const p = place(along, across);
+            let ry;
+            if (axis === 'x') ry = side === -1 ? 0 : Math.PI;
+            else ry = side === -1 ? Math.PI / 2 : -Math.PI / 2;
+            const count = 3 + Math.floor(rnd(320 + t * 5 + side) * 3);
+            colliders.push(...addTerrace(batch, p.x, p.z, count, ry, seed + t * 501 + side * 77));
+          }
+        }
 
-        colliders.push({ x, z, radius: Math.max(w, d) / 2, topY: h + h * 0.4 });
+        // Street lamps
+        for (let k = 0; k < 4; k++) {
+          const p = place(along0 + 25 + k * 50, roadPos + 5.6);
+          addLamp(batch, p.x, p.z);
+        }
+
+        // Traffic
+        const numCars = 2 + Math.floor(rnd(330) * 2);
+        for (let c = 0; c < numCars; c++) {
+          const car = makeCar(this.mats, seed + c * 77);
+          this.scene.add(car);
+          objects.push(car);
+          const dir = c % 2 === 0 ? 1 : -1;
+          this.registerAmbient(chunkKey, {
+            mesh: car, type: 'car', axis, dir,
+            min: along0, max: along0 + CS,
+            pos: along0 + rnd(331 + c) * CS,
+            lane: roadPos + (axis === 'x' ? dir : -dir) * 2.1,
+            speed: 13 + rnd(332 + c) * 9,
+          });
+        }
+
+        // Village green with wildflowers
+        const gp = place(along0 + 100 + (rnd(340) - 0.5) * 60, roadPos - 40 - rnd(341) * 30);
+        flowerPatches.push({ x: gp.x, z: gp.z, count: 60, spread: 22, seed: seed + 350,
+          colors: [0xFFFFFF, 0xFFE066, 0xFF6B9D, 0xE8384F] });
+
+        // Windmill tucked in the corner away from the street
+        if (rnd(999) > 0.55) {
+          this.addWindmill(baseX + 18 + rnd(998) * 25, baseZ + 18 + rnd(997) * 25, objects, colliders);
+        }
+
+        // Church with steeple (rare)
+        if (rnd(1111) > 0.75) {
+          const cp = place(along0 + 100 + (rnd(1112) - 0.5) * 40, roadPos + 42 + rnd(1113) * 20);
+          this.addChurch(cp.x, cp.z, objects, colliders);
+        }
       }
 
-      // Trees
-      const numTrees = 5 + Math.floor(this.seededRandom(seed + 500) * 6);
+      // Oaks scattered away from the street, poplars lining it (both LODs)
+      const numTrees = 6 + Math.floor(rnd(500) * 6);
       for (let i = 0; i < numTrees; i++) {
-        const s = seed + 2000 + i * 100;
-        const x = baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE;
-        const z = baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE;
-        const scale = 0.7 + this.seededRandom(s + 3) * 0.6;
-        this.addTree(x, z, scale, objects, colliders);
+        const s = 2000 + i * 100;
+        const along = along0 + rnd(s + 1) * CS;
+        const across = (axis === 'x' ? baseZ : baseX) + rnd(s + 2) * CS;
+        if (Math.abs(across - roadPos) < 30) continue;
+        const p = place(along, across);
+        colliders.push(addTree(batch, rnd(s + 4) < 0.15 ? 'willow' : 'oak', p.x, p.z, 0.75 + rnd(s + 3) * 0.6, seed + s));
       }
-
-      // Windmill
-      if (this.seededRandom(seed + 999) > 0.6) {
-        this.addWindmill(baseX + GAME_CONFIG.CHUNK_SIZE / 2, baseZ + GAME_CONFIG.CHUNK_SIZE / 2, objects, colliders);
-      }
-
-      // Church with steeple (rare)
-      if (this.seededRandom(seed + 1111) > 0.8) {
-        const cx = baseX + this.seededRandom(seed + 1112) * GAME_CONFIG.CHUNK_SIZE;
-        const cz = baseZ + this.seededRandom(seed + 1113) * GAME_CONFIG.CHUNK_SIZE;
-        this.addChurch(cx, cz, objects, colliders);
+      for (let along = along0 + 8; along < along0 + CS; along += 18) {
+        if (rnd(along + 3) < 0.25) continue;
+        const p = place(along, roadPos - 7.5);
+        colliders.push(addTree(batch, 'poplar', p.x, p.z, 0.9 + rnd(along) * 0.3, seed + along));
       }
     }
 
     // --- BIOME: FARMLAND ---
     if (biome === 'farmland') {
-      // Farm fields (colorful rectangles on ground)
-      const numFields = 3 + Math.floor(this.seededRandom(seed + 100) * 3);
+      const cropTints = [0xE0D060, 0xC8E070, 0x8FBF5A, 0xD8B85A, 0xB5D98A];
+      const numFields = 3 + Math.floor(rnd(100) * 3);
       for (let i = 0; i < numFields; i++) {
-        const s = seed + 3000 + i * 200;
-        const x = baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE;
-        const z = baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE;
-        const fw = 25 + this.seededRandom(s + 3) * 40;
-        const fd = 25 + this.seededRandom(s + 4) * 40;
-        const fieldColors = [0xDAA520, 0x9370DB, 0xE8575A, 0xA0C850, 0xF0E68C, 0xFF6347];
-        const fc = fieldColors[Math.floor(this.seededRandom(s + 5) * fieldColors.length)];
-
-        const fieldGeo = new THREE.PlaneGeometry(fw, fd);
-        const fieldMat = new THREE.MeshStandardMaterial({ color: fc, roughness: 0.95 });
-        const field = new THREE.Mesh(fieldGeo, fieldMat);
-        field.rotation.x = -Math.PI / 2;
-        field.position.set(x, 0.05, z);
-        this.scene.add(field);
-        objects.push(field);
-
-        // Fence around field
-        const fenceMat = new THREE.MeshStandardMaterial({ color: 0x8B7355 });
-        const sides = [
-          { px: x, pz: z - fd / 2, w: fw, d: 0.3 },
-          { px: x, pz: z + fd / 2, w: fw, d: 0.3 },
-          { px: x - fw / 2, pz: z, w: 0.3, d: fd },
-          { px: x + fw / 2, pz: z, w: 0.3, d: fd },
-        ];
-        sides.forEach(side => {
-          const fGeo = new THREE.BoxGeometry(side.w, 1.5, side.d);
-          const fence = new THREE.Mesh(fGeo, fenceMat);
-          fence.position.set(side.px, 0.75, side.pz);
-          this.scene.add(fence);
-          objects.push(fence);
+        const s = 3000 + i * 200;
+        const x = baseX + rnd(s + 1) * CS;
+        const z = baseZ + rnd(s + 2) * CS;
+        const fw = 25 + rnd(s + 3) * 40;
+        const fd = 25 + rnd(s + 4) * 40;
+        const ploughed = rnd(s + 6) < 0.4;
+        batch.add(ploughed ? 'soil' : 'grassPatch', {
+          geo: new THREE.PlaneGeometry(fw, fd),
+          color: ploughed ? soilTints[Math.floor(rnd(s + 5) * soilTints.length)]
+            : cropTints[Math.floor(rnd(s + 5) * cropTints.length)],
+          rx: -Math.PI / 2, x, y: 0.05 + i * 0.002, z,
         });
+        if (high) addFence(batch, x, z, fw, fd);
       }
 
-      // Hay bales
-      const numBales = 3 + Math.floor(this.seededRandom(seed + 200) * 5);
-      for (let i = 0; i < numBales; i++) {
-        const s = seed + 4000 + i * 80;
-        const x = baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE;
-        const z = baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE;
-
-        const baleGeo = new THREE.CylinderGeometry(2, 2, 2.5, 12);
-        const baleMat = new THREE.MeshStandardMaterial({ color: 0xD4A017, roughness: 0.95 });
-        const bale = new THREE.Mesh(baleGeo, baleMat);
-        bale.rotation.x = Math.PI / 2;
-        bale.position.set(x, 1.25, z);
-        this.scene.add(bale);
-        objects.push(bale);
-      }
-
-      // Tulip/flower patches
-      const numFlowerPatches = 2 + Math.floor(this.seededRandom(seed + 300) * 4);
-      for (let i = 0; i < numFlowerPatches; i++) {
-        const s = seed + 5000 + i * 120;
-        const x = baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE;
-        const z = baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE;
-        const flowerColors = [0xFF4444, 0xFFAA00, 0xFF69B4, 0xFFFF00, 0xFF6347, 0xDA70D6];
-        const fc = flowerColors[Math.floor(this.seededRandom(s + 3) * flowerColors.length)];
-
-        for (let f = 0; f < 15; f++) {
-          const fx = x + (this.seededRandom(s + 10 + f) - 0.5) * 12;
-          const fz = z + (this.seededRandom(s + 30 + f) - 0.5) * 12;
-          const fGeo = new THREE.SphereGeometry(0.4, 6, 6);
-          const fMat = new THREE.MeshStandardMaterial({ color: fc, emissive: fc, emissiveIntensity: 0.2 });
-          const flower = new THREE.Mesh(fGeo, fMat);
-          flower.position.set(fx, 0.5, fz);
-          this.scene.add(flower);
-          objects.push(flower);
+      if (high) {
+        // Hay bales
+        const numBales = 3 + Math.floor(rnd(200) * 5);
+        for (let i = 0; i < numBales; i++) {
+          const s = 4000 + i * 80;
+          batch.add('wood', {
+            geo: new THREE.CylinderGeometry(2, 2, 2.5, 12), color: 0xD4A017,
+            x: baseX + rnd(s + 1) * CS, y: 1.25, z: baseZ + rnd(s + 2) * CS,
+            rx: Math.PI / 2, ry: rnd(s + 3) * Math.PI,
+          });
         }
+
+        // Wildflower meadows
+        const numFlowerPatches = 2 + Math.floor(rnd(300) * 4);
+        for (let i = 0; i < numFlowerPatches; i++) {
+          const s = 5000 + i * 120;
+          flowerPatches.push({
+            x: baseX + rnd(s + 1) * CS, z: baseZ + rnd(s + 2) * CS,
+            count: 40, spread: 16, seed: seed + s,
+            colors: [0xFF4444, 0xFFAA00, 0xFF69B4, 0xFFFF66, 0xFFFFFF, 0xDA70D6],
+          });
+        }
+
+        // Farmstead: house, barn, willow and a small orchard
+        if (rnd(400) > 0.4) {
+          const fx = baseX + 40 + rnd(401) * (CS - 80);
+          const fz = baseZ + 40 + rnd(402) * (CS - 80);
+          const ry = rnd(403) * Math.PI * 2;
+          colliders.push(addHouse(batch, fx, fz, 13, 7, 10, ry, seed + 404));
+          const bx = fx + Math.cos(ry) * 22, bz = fz - Math.sin(ry) * 22;
+          batch.add('wood', { geo: new THREE.BoxGeometry(18, 7, 11), color: 0x2E3A2C, x: bx, y: 3.5, z: bz, ry });
+          batch.add('roof', { geo: gableGeometry(18, 5, 11), color: 0x5A3A2A, x: bx, y: 7, z: bz, ry });
+          colliders.push({ x: bx, z: bz, radius: 10, topY: 12 });
+          colliders.push(addTree(batch, 'willow', fx - Math.cos(ry) * 16, fz + Math.sin(ry) * 16, 0.9, seed + 405));
+          for (let o = 0; o < 6; o++) {
+            const ox = fx + Math.sin(ry) * 20 + (o % 3) * 9 - 9;
+            const oz = fz + Math.cos(ry) * 20 + Math.floor(o / 3) * 9;
+            colliders.push(addTree(batch, 'oak', ox, oz, 0.45, seed + 410 + o));
+          }
+        }
+
+        // Grazing sheep
+        const herd = 3 + Math.floor(rnd(5000) * 4);
+        this.addHerd(baseX + 30 + rnd(5001) * (CS - 60), baseZ + 30 + rnd(5002) * (CS - 60), herd, 'sheep', seed + 5010, objects);
       }
 
-      // Occasional farmhouse
-      if (this.seededRandom(seed + 400) > 0.5) {
-        const fhx = baseX + this.seededRandom(seed + 401) * GAME_CONFIG.CHUNK_SIZE;
-        const fhz = baseZ + this.seededRandom(seed + 402) * GAME_CONFIG.CHUNK_SIZE;
-        const wallGeo = new THREE.BoxGeometry(14, 8, 10);
-        const wallMat = new THREE.MeshStandardMaterial({ color: 0xFFF8DC, roughness: 0.8 });
-        const walls = new THREE.Mesh(wallGeo, wallMat);
-        walls.position.set(fhx, 4, fhz);
-        this.scene.add(walls);
-        objects.push(walls);
-
-        const roofGeo = new THREE.ConeGeometry(12, 4, 4);
-        const roofMat = new THREE.MeshStandardMaterial({ color: 0x8B0000, roughness: 0.7 });
-        const roof = new THREE.Mesh(roofGeo, roofMat);
-        roof.position.set(fhx, 9.5, fhz);
-        roof.rotation.y = Math.PI / 4;
-        this.scene.add(roof);
-        objects.push(roof);
-
-        colliders.push({ x: fhx, z: fhz, radius: 8, topY: 12 });
-      }
-
-      // Some trees
-      const numTrees = 2 + Math.floor(this.seededRandom(seed + 550) * 3);
+      // Field trees
+      const numTrees = 2 + Math.floor(rnd(550) * 3);
       for (let i = 0; i < numTrees; i++) {
-        const s = seed + 6000 + i * 100;
-        const x = baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE;
-        const z = baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE;
-        this.addTree(x, z, 0.6 + this.seededRandom(s + 3) * 0.5, objects, colliders);
+        const s = 6000 + i * 100;
+        colliders.push(addTree(batch, 'oak', baseX + rnd(s + 1) * CS, baseZ + rnd(s + 2) * CS, 0.6 + rnd(s + 3) * 0.5, seed + s));
       }
+
+      // Wind farm on the open land
+      if (rnd(880) > 0.86) this.addTurbineRow(batch, baseX, baseZ, seed + 890, chunkKey, objects, colliders);
     }
 
     // --- BIOME: WATERLAND ---
     if (biome === 'waterland') {
-      // Canal running through the chunk
-      const canalDir = this.seededRandom(seed + 700) > 0.5; // true = X direction, false = Z direction
-      const canalOffset = baseZ + this.seededRandom(seed + 701) * GAME_CONFIG.CHUNK_SIZE;
-      const canalOffset2 = baseX + this.seededRandom(seed + 702) * GAME_CONFIG.CHUNK_SIZE;
+      const canalAlongX = rnd(700) > 0.5;
+      const canalZ = baseZ + 30 + rnd(701) * (CS - 60);
+      const canalX = baseX + 30 + rnd(702) * (CS - 60);
+      const canalW = 12 + rnd(703) * 6;
 
-      const waterMat = new THREE.MeshStandardMaterial({
-        color: 0x2E86C1, roughness: 0.3, metalness: 0.4, transparent: true, opacity: 0.8,
-      });
-
-      if (canalDir) {
-        const canalGeo = new THREE.PlaneGeometry(GAME_CONFIG.CHUNK_SIZE, 12);
-        const canal = new THREE.Mesh(canalGeo, waterMat);
-        canal.rotation.x = -Math.PI / 2;
-        canal.position.set(baseX + GAME_CONFIG.CHUNK_SIZE / 2, 0.03, canalOffset);
-        this.scene.add(canal);
-        objects.push(canal);
-
-        // Bridge over canal
-        if (this.seededRandom(seed + 710) > 0.4) {
-          const bx = baseX + this.seededRandom(seed + 711) * GAME_CONFIG.CHUNK_SIZE;
-          const bridgeGeo = new THREE.BoxGeometry(8, 2, 14);
-          const bridgeMat = new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 0.7 });
-          const bridge = new THREE.Mesh(bridgeGeo, bridgeMat);
-          bridge.position.set(bx, 1, canalOffset);
-          this.scene.add(bridge);
-          objects.push(bridge);
-
-          // Bridge railings
-          const railGeo = new THREE.BoxGeometry(0.3, 1.5, 14);
-          const railMat = new THREE.MeshStandardMaterial({ color: 0x696969 });
-          const leftRail = new THREE.Mesh(railGeo, railMat);
-          leftRail.position.set(bx - 3.8, 2.75, canalOffset);
-          this.scene.add(leftRail);
-          objects.push(leftRail);
-          const rightRail = new THREE.Mesh(railGeo, railMat);
-          rightRail.position.set(bx + 3.8, 2.75, canalOffset);
-          this.scene.add(rightRail);
-          objects.push(rightRail);
+      if (canalAlongX) {
+        batch.add('water', { geo: new THREE.PlaneGeometry(CS, canalW), rx: -Math.PI / 2, x: baseX + CS / 2, y: 0.03, z: canalZ });
+        // Banks
+        batch.add('soil', { geo: new THREE.PlaneGeometry(CS, 2.5), color: 0x8A7A55, rx: -Math.PI / 2, x: baseX + CS / 2, y: 0.035, z: canalZ - canalW / 2 - 1 });
+        batch.add('soil', { geo: new THREE.PlaneGeometry(CS, 2.5), color: 0x8A7A55, rx: -Math.PI / 2, x: baseX + CS / 2, y: 0.035, z: canalZ + canalW / 2 + 1 });
+        // Poplars along the far bank
+        for (let x = baseX + 6; x < baseX + CS; x += 13) {
+          colliders.push(addTree(batch, 'poplar', x, canalZ + canalW / 2 + 6, 0.9 + rnd(x) * 0.35, seed + x));
+        }
+        if (high && rnd(710) > 0.35) {
+          const bx = baseX + 30 + rnd(711) * (CS - 60);
+          batch.add('metal', { geo: new THREE.BoxGeometry(7, 0.8, canalW + 4), color: 0x7A7A7A, x: bx, y: 1.2, z: canalZ });
+          batch.add('metal', { geo: new THREE.BoxGeometry(0.25, 1.2, canalW + 4), color: 0x4A4A4A, x: bx - 3.3, y: 2.2, z: canalZ });
+          batch.add('metal', { geo: new THREE.BoxGeometry(0.25, 1.2, canalW + 4), color: 0x4A4A4A, x: bx + 3.3, y: 2.2, z: canalZ });
         }
       } else {
-        const canalGeo = new THREE.PlaneGeometry(12, GAME_CONFIG.CHUNK_SIZE);
-        const canal = new THREE.Mesh(canalGeo, waterMat);
-        canal.rotation.x = -Math.PI / 2;
-        canal.position.set(canalOffset2, 0.03, baseZ + GAME_CONFIG.CHUNK_SIZE / 2);
-        this.scene.add(canal);
-        objects.push(canal);
+        batch.add('water', { geo: new THREE.PlaneGeometry(canalW, CS), rx: -Math.PI / 2, x: canalX, y: 0.03, z: baseZ + CS / 2 });
+        batch.add('soil', { geo: new THREE.PlaneGeometry(2.5, CS), color: 0x8A7A55, rx: -Math.PI / 2, x: canalX - canalW / 2 - 1, y: 0.035, z: baseZ + CS / 2 });
+        batch.add('soil', { geo: new THREE.PlaneGeometry(2.5, CS), color: 0x8A7A55, rx: -Math.PI / 2, x: canalX + canalW / 2 + 1, y: 0.035, z: baseZ + CS / 2 });
+        for (let z = baseZ + 6; z < baseZ + CS; z += 13) {
+          colliders.push(addTree(batch, 'poplar', canalX + canalW / 2 + 6, z, 0.9 + rnd(z) * 0.35, seed + z));
+        }
       }
 
-      // Ponds
-      const numPonds = 1 + Math.floor(this.seededRandom(seed + 720) * 2);
+      // Ponds with reeds, boats and willows
+      const numPonds = 1 + Math.floor(rnd(720) * 2);
       for (let i = 0; i < numPonds; i++) {
-        const s = seed + 7000 + i * 100;
-        const x = baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE;
-        const z = baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE;
-        const r = 8 + this.seededRandom(s + 3) * 12;
-
-        const pondGeo = new THREE.CircleGeometry(r, 16);
-        const pond = new THREE.Mesh(pondGeo, waterMat);
-        pond.rotation.x = -Math.PI / 2;
-        pond.position.set(x, 0.04, z);
-        this.scene.add(pond);
-        objects.push(pond);
-
-        // Rowboat on larger ponds
-        if (r > 12) {
-          this.addRowboat(x, z, r, `${chunkX},${chunkZ}`, objects, seed + i);
+        const s = 7000 + i * 100;
+        const x = baseX + 25 + rnd(s + 1) * (CS - 50);
+        const z = baseZ + 25 + rnd(s + 2) * (CS - 50);
+        const r = 8 + rnd(s + 3) * 12;
+        batch.add('water', { geo: new THREE.CircleGeometry(r, 20), rx: -Math.PI / 2, x, y: 0.04, z });
+        if (high) {
+          if (r > 12) this.addRowboat(x, z, r, chunkKey, objects, seed + i);
+          for (let j = 0; j < 14; j++) {
+            const angle = (j / 14) * Math.PI * 2 + rnd(s + 40 + j) * 0.3;
+            batch.add('wood', {
+              geo: new THREE.CylinderGeometry(0.12, 0.18, 2.5 + rnd(s + 60 + j) * 2, 4), color: 0x6B8E23,
+              x: x + Math.cos(angle) * (r + 0.8), y: 1.4, z: z + Math.sin(angle) * (r + 0.8),
+              rz: (rnd(s + 80 + j) - 0.5) * 0.3,
+            });
+          }
         }
-
-        // Reeds around pond
-        for (let j = 0; j < 8; j++) {
-          const angle = (j / 8) * Math.PI * 2;
-          const rx = x + Math.cos(angle) * (r + 1);
-          const rz = z + Math.sin(angle) * (r + 1);
-
-          const reedGeo = new THREE.CylinderGeometry(0.15, 0.2, 3 + this.seededRandom(s + 40 + j) * 2, 4);
-          const reedMat = new THREE.MeshStandardMaterial({ color: 0x6B8E23 });
-          const reed = new THREE.Mesh(reedGeo, reedMat);
-          reed.position.set(rx, 1.5, rz);
-          this.scene.add(reed);
-          objects.push(reed);
-        }
+        colliders.push(addTree(batch, 'willow', x + r + 6, z - 3, 0.8 + rnd(s + 9) * 0.4, seed + s));
       }
 
-      // Scattered trees (fewer)
-      const numTrees = 2 + Math.floor(this.seededRandom(seed + 750) * 3);
+      const numTrees = 2 + Math.floor(rnd(750) * 3);
       for (let i = 0; i < numTrees; i++) {
-        const s = seed + 7500 + i * 100;
-        const x = baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE;
-        const z = baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE;
-        this.addTree(x, z, 0.8 + this.seededRandom(s + 3) * 0.4, objects, colliders);
+        const s = 7500 + i * 100;
+        colliders.push(addTree(batch, 'oak', baseX + rnd(s + 1) * CS, baseZ + rnd(s + 2) * CS, 0.8 + rnd(s + 3) * 0.4, seed + s));
       }
 
-      // Windmill near water
-      if (this.seededRandom(seed + 799) > 0.65) {
-        this.addWindmill(baseX + this.seededRandom(seed + 800) * GAME_CONFIG.CHUNK_SIZE,
-                         baseZ + this.seededRandom(seed + 801) * GAME_CONFIG.CHUNK_SIZE,
-                         objects, colliders);
+      if (high && rnd(799) > 0.6) {
+        this.addWindmill(baseX + 20 + rnd(800) * (CS - 40), baseZ + 20 + rnd(801) * (CS - 40), objects, colliders);
       }
+      if (rnd(881) > 0.8) this.addTurbineRow(batch, baseX, baseZ, seed + 891, chunkKey, objects, colliders);
     }
-
-    } // end lod === 'high' detailed scenery
-
-    const chunkKey = `${chunkX},${chunkZ}`;
 
     // --- Striped tulip fields (farmland's signature look) ---
     if (biome === 'farmland') {
-      const numFields = 1 + Math.floor(this.seededRandom(seed + 3000) * 2);
+      const numFields = 1 + Math.floor(rnd(3000) * 2);
       for (let i = 0; i < numFields; i++) {
         const s = seed + 3000 + i * 77;
-        this.addTulipField(
-          baseX + this.seededRandom(s + 1) * GAME_CONFIG.CHUNK_SIZE,
-          baseZ + this.seededRandom(s + 2) * GAME_CONFIG.CHUNK_SIZE,
-          s, objects);
+        this.addTulipField(baseX + this.seededRandom(s + 1) * CS, baseZ + this.seededRandom(s + 2) * CS, s, objects);
       }
     }
 
-    // --- Grazing livestock (cows in villages, sheep in farmland) ---
-    if (lod === 'high' && biome !== 'waterland') {
-      const herd = 3 + Math.floor(this.seededRandom(seed + 5000) * 4);
-      const hx = baseX + 30 + this.seededRandom(seed + 5001) * (GAME_CONFIG.CHUNK_SIZE - 60);
-      const hz = baseZ + 30 + this.seededRandom(seed + 5002) * (GAME_CONFIG.CHUNK_SIZE - 60);
-      this.addHerd(hx, hz, herd, biome === 'village' ? 'cow' : 'sheep', seed + 5010, objects);
+    // --- Cows graze near villages ---
+    if (high && biome === 'village') {
+      const herd = 3 + Math.floor(rnd(5000) * 4);
+      this.addHerd(baseX + 30 + rnd(5001) * (CS - 60), baseZ + 30 + rnd(5002) * (CS - 60), herd, 'cow', seed + 5010, objects);
     }
 
     // --- Hot air balloons drifting overhead ---
-    if (this.seededRandom(seed + 6100) < 0.2) {
-      this.addHotAirBalloon(
-        baseX + this.seededRandom(seed + 6101) * GAME_CONFIG.CHUNK_SIZE,
-        baseZ + this.seededRandom(seed + 6102) * GAME_CONFIG.CHUNK_SIZE,
-        seed + 6103, chunkKey, objects);
+    if (rnd(6100) < 0.2) {
+      this.addHotAirBalloon(baseX + rnd(6101) * CS, baseZ + rnd(6102) * CS, seed + 6103, chunkKey, objects);
     }
 
     // --- Rare landmarks: reasons to fly toward the horizon ---
-    const landmarkRoll = this.seededRandom(seed + 4242);
+    const landmarkRoll = rnd(4242);
     if (landmarkRoll < 0.025) {
-      this.addCastle(baseX + GAME_CONFIG.CHUNK_SIZE / 2, baseZ + GAME_CONFIG.CHUNK_SIZE / 2, objects, colliders);
+      this.addCastle(baseX + CS / 2, baseZ + CS / 2, objects, colliders);
+      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🏰', 'Castle', 'A medieval stronghold');
     } else if (landmarkRoll < 0.05) {
-      this.addLighthouse(baseX + GAME_CONFIG.CHUNK_SIZE / 2, baseZ + GAME_CONFIG.CHUNK_SIZE / 2, chunkKey, objects, colliders);
+      this.addLighthouse(baseX + CS / 2, baseZ + CS / 2, chunkKey, objects, colliders);
+      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🗼', 'Lighthouse', 'Guiding ships on the lake');
     } else if (landmarkRoll < 0.07) {
-      // Balloon festival: a cluster of balloons at varied heights
       for (let i = 0; i < 4; i++) {
         const s = seed + 4300 + i * 31;
-        this.addHotAirBalloon(
-          baseX + 40 + this.seededRandom(s) * (GAME_CONFIG.CHUNK_SIZE - 80),
-          baseZ + 40 + this.seededRandom(s + 1) * (GAME_CONFIG.CHUNK_SIZE - 80),
-          s + 2, chunkKey, objects);
+        this.addHotAirBalloon(baseX + 40 + this.seededRandom(s) * (CS - 80), baseZ + 40 + this.seededRandom(s + 1) * (CS - 80), s + 2, chunkKey, objects);
       }
+      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🎈', 'Balloon Festival', 'Balloons fill the sky');
     }
 
     // --- Magic tulip power-up (any biome) ---
-    if (lod === 'high' && this.seededRandom(seed + 9999) < GAME_CONFIG.PICKUP_SPAWN_CHANCE) {
-      const px = baseX + 20 + this.seededRandom(seed + 9998) * (GAME_CONFIG.CHUNK_SIZE - 40);
-      const pz = baseZ + 20 + this.seededRandom(seed + 9997) * (GAME_CONFIG.CHUNK_SIZE - 40);
-      const type = this.seededRandom(seed + 9996) < 0.5 ? 'energy' : 'speed';
-      this.addTulipPickup(px, pz, type, `${chunkX},${chunkZ}`, objects);
+    if (high && rnd(9999) < GAME_CONFIG.PICKUP_SPAWN_CHANCE) {
+      const px = baseX + 20 + rnd(9998) * (CS - 40);
+      const pz = baseZ + 20 + rnd(9997) * (CS - 40);
+      const type = rnd(9996) < 0.5 ? 'energy' : 'speed';
+      this.addTulipPickup(px, pz, type, chunkKey, objects);
     }
 
-    // Everything in the world casts and receives shadows
+    // Batched static scenery: one mesh per material
+    for (const mesh of batch.build(this.mats)) {
+      this.scene.add(mesh);
+      objects.push(mesh);
+    }
+    if (flowerPatches.length) {
+      const flowers = makeFlowerField(flowerPatches);
+      if (flowers) {
+        this.scene.add(flowers);
+        objects.push(flowers);
+      }
+    }
+
+    // Non-batched props cast and receive shadows too
     for (const obj of objects) {
+      if (obj.userData.bucket !== undefined || obj.isInstancedMesh) continue;
       obj.traverse(child => {
         if (child.isMesh) {
           child.castShadow = true;
@@ -821,6 +904,31 @@ class Game {
     this.chunks.set(chunkKey, objects);
     this.chunkLods.set(chunkKey, lod);
     this.obstacles.set(chunkKey, colliders);
+  }
+
+  /** A line of three modern wind turbines with spinning rotors */
+  addTurbineRow(batch, baseX, baseZ, seed, chunkKey, objects, colliders) {
+    const CS = GAME_CONFIG.CHUNK_SIZE;
+    const sx = baseX + 30 + this.seededRandom(seed) * 40;
+    const sz = baseZ + 30 + this.seededRandom(seed + 1) * 40;
+    const dir = this.seededRandom(seed + 2) * Math.PI * 0.5;
+    const ry = this.seededRandom(seed + 3) * Math.PI * 2;
+    for (let i = 0; i < 3; i++) {
+      const x = sx + Math.cos(dir) * i * 55;
+      const z = sz + Math.sin(dir) * i * 55;
+      const t = addTurbine(batch, this.mats, x, z, ry, 40 + this.seededRandom(seed + 4 + i) * 8);
+      t.rotor.traverse(c => { if (c.isMesh) { c.castShadow = true; } });
+      this.scene.add(t.rotor);
+      objects.push(t.rotor);
+      colliders.push(t.collider);
+      this.registerAmbient(chunkKey, { mesh: t.rotor, type: 'turbine' });
+    }
+    this.registerLandmark(chunkKey, sx + Math.cos(dir) * 55, sz + Math.sin(dir) * 55, '🌬️', 'Wind Farm', 'Turbines harvesting the polder wind');
+  }
+
+  registerLandmark(chunkKey, x, z, icon, name, subtitle) {
+    if (!this.chunkLandmarks.has(chunkKey)) this.chunkLandmarks.set(chunkKey, []);
+    this.chunkLandmarks.get(chunkKey).push({ id: `${name}@${chunkKey}`, x, z, icon, name, subtitle });
   }
 
   /**
@@ -911,61 +1019,6 @@ class Game {
   }
 
   // --- Reusable scenery helpers ---
-
-  /**
-   * Gradient sky dome (deep zenith blue fading to hazy horizon) with a
-   * glowing sun disc. Replaces the flat single-color background.
-   */
-  createSkyDome() {
-    const geo = new THREE.SphereGeometry(1400, 24, 12);
-    const mat = new THREE.ShaderMaterial({
-      side: THREE.BackSide,
-      depthWrite: false,
-      fog: false,
-      uniforms: {
-        topColor: { value: new THREE.Color(0x3D7EDB) },
-        bottomColor: { value: new THREE.Color(0xC9E8F5) },
-      },
-      vertexShader: `
-        varying vec3 vWorldPos;
-        void main() {
-          vec4 wp = modelMatrix * vec4(position, 1.0);
-          vWorldPos = wp.xyz;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }`,
-      fragmentShader: `
-        uniform vec3 topColor;
-        uniform vec3 bottomColor;
-        varying vec3 vWorldPos;
-        void main() {
-          float h = normalize(vWorldPos - cameraPosition).y;
-          float t = pow(max(h, 0.0), 0.55);
-          gl_FragColor = vec4(mix(bottomColor, topColor, t), 1.0);
-        }`,
-    });
-    this.skyDome = new THREE.Mesh(geo, mat);
-    this.skyDome.renderOrder = -10;
-    this.scene.add(this.skyDome);
-
-    // Sun disc + soft glow, fixed in the sky along the sunlight direction
-    const sunDir = new THREE.Vector3(120, 180, 80).normalize();
-    const sunGroup = new THREE.Group();
-    const disc = new THREE.Mesh(
-      new THREE.CircleGeometry(55, 24),
-      new THREE.MeshBasicMaterial({ color: 0xFFF6D5, fog: false })
-    );
-    const glow = new THREE.Mesh(
-      new THREE.CircleGeometry(130, 24),
-      new THREE.MeshBasicMaterial({ color: 0xFFEBB0, transparent: true, opacity: 0.25, fog: false })
-    );
-    sunGroup.add(glow);
-    sunGroup.add(disc);
-    sunGroup.position.copy(sunDir.multiplyScalar(1300));
-    sunGroup.lookAt(0, 0, 0);
-    sunGroup.renderOrder = -9;
-    this.sunGroup = sunGroup;
-    this.scene.add(sunGroup);
-  }
 
   registerAmbient(chunkKey, entry) {
     if (!this.ambient.has(chunkKey)) this.ambient.set(chunkKey, []);
@@ -1265,26 +1318,6 @@ class Game {
   updateAmbient(delta) {
     const t = this.animationTime;
 
-    // Sky dome follows the camera (appears infinite) and its gradient
-    // tracks the weather's sky color: deep saturated zenith, hazy horizon
-    if (this.skyDome) {
-      this.skyDome.position.copy(this.camera.position);
-      const sky = this.scene.background;
-      if (sky && sky.isColor) {
-        const u = this.skyDome.material.uniforms;
-        u.topColor.value.copy(sky).multiplyScalar(0.62);
-        u.bottomColor.value.copy(sky).lerp(new THREE.Color(0xFFFFFF), 0.55);
-      }
-    }
-    if (this.sunGroup) {
-      this.sunGroup.position.set(
-        this.camera.position.x + 120 / 232 * 1300,
-        this.camera.position.y + 180 / 232 * 1300,
-        this.camera.position.z + 80 / 232 * 1300
-      );
-      this.sunGroup.lookAt(this.camera.position);
-    }
-
     for (const [, list] of this.ambient) {
       for (const a of list) {
         if (a.type === 'balloon') {
@@ -1296,6 +1329,19 @@ class Game {
           a.mesh.rotation.x = Math.cos(t * 0.9 + a.phase) * 0.04;
         } else if (a.type === 'lightbeam') {
           a.mesh.rotation.y = t * 0.8;
+        } else if (a.type === 'turbine') {
+          a.mesh.rotation.z += delta * (0.5 + this.wind.speed * 0.09);
+        } else if (a.type === 'car') {
+          a.pos += a.dir * a.speed * delta;
+          if (a.pos > a.max) a.pos = a.min;
+          if (a.pos < a.min) a.pos = a.max;
+          if (a.axis === 'x') {
+            a.mesh.position.set(a.pos, 0.1, a.lane);
+            a.mesh.rotation.y = a.dir > 0 ? 0 : Math.PI;
+          } else {
+            a.mesh.position.set(a.lane, 0.1, a.pos);
+            a.mesh.rotation.y = a.dir > 0 ? -Math.PI / 2 : Math.PI / 2;
+          }
         }
       }
     }
@@ -1320,25 +1366,6 @@ class Game {
         }
       }
     }
-  }
-
-  addTree(x, z, scale, objects, colliders) {
-    const trunkGeo = new THREE.CylinderGeometry(1 * scale, 1.5 * scale, 8 * scale);
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
-    const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-    trunk.position.set(x, 4 * scale, z);
-    this.scene.add(trunk);
-    objects.push(trunk);
-
-    const foliageGeo = new THREE.SphereGeometry(6 * scale, 8, 8);
-    const green = Math.random() > 0.5 ? 0x228B22 : 0x2E8B57;
-    const foliageMat = new THREE.MeshStandardMaterial({ color: green, roughness: 0.9 });
-    const foliage = new THREE.Mesh(foliageGeo, foliageMat);
-    foliage.position.set(x, 12 * scale, z);
-    this.scene.add(foliage);
-    objects.push(foliage);
-
-    colliders.push({ x, z, radius: 6 * scale, topY: (12 + 6) * scale });
   }
 
   addWindmill(wx, wz, objects, colliders) {
@@ -1409,31 +1436,6 @@ class Game {
     colliders.push({ x: cx, z: cz - 8, radius: 3, topY: 42 });
   }
 
-  createClouds() {
-    for (let i = 0; i < 10; i++) {
-      const cloudSubGroup = new THREE.Group();
-      for (let j = 0; j < 5; j++) {
-        const cloudGeo = new THREE.SphereGeometry(8 + Math.random() * 6, 8, 8);
-        const cloudMat = new THREE.MeshStandardMaterial({
-          color: 0xFFFFFF, transparent: true, opacity: 0.8, roughness: 1,
-        });
-        const cloudPart = new THREE.Mesh(cloudGeo, cloudMat);
-        cloudPart.position.set(
-          (Math.random() - 0.5) * 15,
-          (Math.random() - 0.5) * 5,
-          (Math.random() - 0.5) * 15
-        );
-        cloudSubGroup.add(cloudPart);
-      }
-      cloudSubGroup.position.set(
-        (Math.random() - 0.5) * 800,
-        55 + Math.random() * 30,
-        (Math.random() - 0.5) * 800
-      );
-      this.cloudGroup.add(cloudSubGroup);
-    }
-  }
-
   // =========================================================================
   // CONTRAILS & SMOKE TRAILS
   // =========================================================================
@@ -1458,6 +1460,10 @@ class Game {
     const trail = this.trails.get(playerId);
     if (!trail) return;
 
+    // A respawn or teleport would draw a laser-straight line across the sky;
+    // start a fresh trail instead
+    const last = trail.points[trail.points.length - 1];
+    if (last && last.distanceToSquared(position) > 40 * 40) trail.points.length = 0;
     trail.points.push(position.clone());
     if (trail.points.length > trail.maxPoints) trail.points.shift();
 
@@ -1597,10 +1603,10 @@ class Game {
     };
 
     this.weatherPresets = {
-      clear:  { fogNear: 300, fogFar: 950, sky: 0x87CEEB, rain: 0 },
-      cloudy: { fogNear: 200, fogFar: 650, sky: 0x8899AA, rain: 0 },
-      rainy:  { fogNear: 80,  fogFar: 350, sky: 0x556677, rain: 1 },
-      foggy:  { fogNear: 30,  fogFar: 180, sky: 0x999999, rain: 0 },
+      clear:  { fogNear: 320, fogFar: 1000, overcast: 0.0,  rain: 0, cover: 0.3,  wind: 7 },
+      cloudy: { fogNear: 220, fogFar: 720,  overcast: 0.55, rain: 0, cover: 0.75, wind: 11 },
+      rainy:  { fogNear: 90,  fogFar: 380,  overcast: 0.92, rain: 1, cover: 1.0,  wind: 16 },
+      foggy:  { fogNear: 30,  fogFar: 200,  overcast: 0.8,  rain: 0, cover: 0.5,  wind: 4 },
     };
 
     this.weatherCycle = ['clear', 'cloudy', 'rainy', 'cloudy', 'foggy', 'cloudy'];
@@ -1623,8 +1629,11 @@ class Game {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
+    // Screen-space streaks: constant pixel size so drops near the camera
+    // never balloon into blobs
     const mat = new THREE.PointsMaterial({
-      color: 0xaabbcc, size: 0.4, transparent: true, opacity: 0,
+      color: 0xC8D6E4, size: 14, sizeAttenuation: false, transparent: true, opacity: 0,
+      map: this.textures.rainStreak(), depthWrite: false,
     });
 
     this.rainMesh = new THREE.Points(geo, mat);
@@ -1637,6 +1646,7 @@ class Game {
     ws.timer += delta;
 
     if (!ws.transitioning) {
+      Object.assign(this.weatherNow, this.weatherPresets[ws.current]);
       if (ws.timer >= ws.holdDuration) {
         ws.transitioning = true;
         ws.timer = 0;
@@ -1649,15 +1659,11 @@ class Game {
       const to = this.weatherPresets[ws.next];
       const t = ws.progress;
 
-      this.scene.fog.near = from.fogNear + (to.fogNear - from.fogNear) * t;
-      this.scene.fog.far = from.fogFar + (to.fogFar - from.fogFar) * t;
-
-      const fromC = new THREE.Color(from.sky);
-      const toC = new THREE.Color(to.sky);
-      this.scene.background = fromC.clone().lerp(toC, t);
-      this.scene.fog.color.copy(this.scene.background);
-
-      this.rainMesh.material.opacity = (from.rain + (to.rain - from.rain) * t) * 0.6;
+      const now = this.weatherNow;
+      for (const k of ['fogNear', 'fogFar', 'overcast', 'rain', 'cover', 'wind']) {
+        now[k] = from[k] + (to[k] - from[k]) * t;
+      }
+      this.rainMesh.material.opacity = now.rain * 0.6;
 
       if (ws.progress >= 1) {
         ws.current = ws.next;
@@ -1675,7 +1681,9 @@ class Game {
       const pos = this.rainMesh.geometry.attributes.position.array;
       for (let i = 0; i < this.rainVelocities.length; i++) {
         pos[i * 3 + 1] -= this.rainVelocities[i] * delta;
-        if (pos[i * 3 + 1] < 0) {
+        pos[i * 3] += this.wind.x * 0.6 * delta;
+        pos[i * 3 + 2] += this.wind.z * 0.6 * delta;
+        if (pos[i * 3 + 1] < 0 || Math.abs(pos[i * 3]) > 160 || Math.abs(pos[i * 3 + 2]) > 160) {
           pos[i * 3 + 1] = 60 + Math.random() * 20;
           pos[i * 3] = (Math.random() - 0.5) * 300;
           pos[i * 3 + 2] = (Math.random() - 0.5) * 300;
@@ -1691,11 +1699,34 @@ class Game {
       this.rainMesh.position.z = ship.position.z;
     }
 
-    // Update HUD indicator
-    const el = document.getElementById('weather-indicator');
-    if (el) {
-      const icons = { clear: 'Clear', cloudy: 'Cloudy', foggy: 'Foggy', rainy: 'Rain' };
-      el.textContent = icons[ws.current] || '';
+    // Lightning during storms
+    if (this.weatherNow.rain > 0.5) {
+      this.lightningTimer -= delta;
+      if (this.lightningTimer <= 0) {
+        this.lightningTimer = 5 + Math.random() * 12;
+        if (this.sky) this.sky.triggerLightning();
+        this.shake(0.25, 0.3);
+        setTimeout(() => this.playSound('thunder'), 300 + Math.random() * 900);
+      }
+    }
+
+    // Wet surfaces turn glossy in the rain
+    const wet = this.weatherNow.rain;
+    if (this.groundMat) this.groundMat.roughness = 0.95 - wet * 0.45;
+    if (this.mats) {
+      this.mats.asphalt.roughness = 0.95 - wet * 0.6;
+      this.mats.grassPatch.roughness = 0.95 - wet * 0.4;
+      this.mats.soil.roughness = 0.98 - wet * 0.5;
+      this.mats.roof.roughness = 0.85 - wet * 0.45;
+    }
+
+    // Environment readout
+    if (this.instruments && this.sky) {
+      const names = { clear: 'Clear', cloudy: 'Cloudy', foggy: 'Fog', rainy: 'Rain' };
+      const night = this.sky.state.nightFactor > 0.5;
+      const icons = { clear: night ? '🌙' : '☀️', cloudy: night ? '☁️' : '⛅', foggy: '🌫️', rainy: '🌧️' };
+      const label = ws.transitioning ? `${names[ws.current]} → ${names[ws.next]}` : names[ws.current];
+      this.instruments.setEnv(`${icons[ws.current]} ${this.sky.clockText}`, label, this.wind.speed * 3.6);
     }
   }
 
@@ -2043,14 +2074,6 @@ class Game {
     this.camera.lookAt(ship.position);
 
     // Move ground/clouds/chunks with ship during takeoff
-    if (this.groundPlane) {
-      this.groundPlane.position.x = ship.position.x;
-      this.groundPlane.position.z = ship.position.z;
-    }
-    if (this.cloudGroup) {
-      this.cloudGroup.position.x = ship.position.x;
-      this.cloudGroup.position.z = ship.position.z;
-    }
     this.updateChunks(ship.position.x, ship.position.z);
   }
 
@@ -2621,6 +2644,34 @@ class Game {
         gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
         osc.start(t); osc.stop(t + 0.07);
         break;
+      case 'warning':
+        // Two-tone terrain alert
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(880, t);
+        osc.frequency.setValueAtTime(660, t + 0.12);
+        gain.gain.setValueAtTime(0.08, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+        osc.start(t); osc.stop(t + 0.24);
+        break;
+      case 'thunder': {
+        // Filtered noise burst with a long rumbling tail
+        const len = Math.floor(ctx.sampleRate * 2.2);
+        const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(420, t);
+        filter.frequency.exponentialRampToValueAtTime(90, t + 2.0);
+        const rumble = ctx.createGain();
+        rumble.gain.setValueAtTime(0.55, t);
+        rumble.gain.exponentialRampToValueAtTime(0.001, t + 2.2);
+        src.connect(filter).connect(rumble).connect(master);
+        src.start(t);
+        break;
+      }
       case 'kill':
         // Rising three-note fanfare
         osc.type = 'square';
@@ -2926,6 +2977,7 @@ class Game {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    if (this.postfx) this.postfx.resize(window.innerWidth, window.innerHeight, this.renderer.getPixelRatio());
   }
 
   onKeyDown(event) {
@@ -2935,6 +2987,15 @@ class Game {
     if (document.activeElement === chatInput) {
       if (event.key === 'Escape') {
         chatInput.blur();
+      }
+      return;
+    }
+
+    // Settings panel open: Escape closes it, everything else goes to the form
+    if (this.instruments?.settingsOpen) {
+      if (event.key === 'Escape') {
+        this.instruments.toggleSettings(false);
+        event.preventDefault();
       }
       return;
     }
@@ -2974,6 +3035,9 @@ class Game {
       case ' ': this.controls.shooting = true; event.preventDefault(); break;
       case 'r': this.startBarrelRoll(); break;
       case 'm': this.toggleMute(); break;
+      case 'p': if (this.localPlayer) this.togglePhotoMode(); break;
+      case 'c': this.captureRequested = true; break;
+      case 'escape': this.instruments.toggleSettings(true); event.preventDefault(); break;
     }
   }
 
@@ -3087,14 +3151,6 @@ class Game {
       this.spawnSmokeParticle(ship.position, isFire);
     }
 
-    if (this.groundPlane) {
-      this.groundPlane.position.x = ship.position.x;
-      this.groundPlane.position.z = ship.position.z;
-    }
-    if (this.cloudGroup) {
-      this.cloudGroup.position.x = ship.position.x;
-      this.cloudGroup.position.z = ship.position.z;
-    }
     this.updateChunks(ship.position.x, ship.position.z);
 
     // Shooting
@@ -3132,6 +3188,7 @@ class Game {
     }
 
     this.checkCollisions(ship);
+    this.updateFlightInstruments(ship, speed, delta);
 
     const camBehind = 14;
     const camUp = 8;
@@ -3160,11 +3217,208 @@ class Game {
       this.camera.position.z += (Math.random() - 0.5) * s * 2;
     }
 
-    // Shadow frustum follows the player so shadows stay crisp everywhere
-    if (this.sunLight) {
-      this.sunLight.position.set(ship.position.x + 120, 180, ship.position.z + 80);
-      this.sunLight.target.position.set(ship.position.x, 0, ship.position.z);
+    // Photo mode: cinematic orbit around the plane
+    if (this.photoMode) this.updatePhotoCamera(ship, delta);
+  }
+
+  /** Compass, artificial horizon, terrain warning, vignettes, discoveries */
+  updateFlightInstruments(ship, speed, delta) {
+    const ins = this.instruments;
+    if (!ins) return;
+
+    // Heading (0 = north = -Z, clockwise)
+    const headingDeg = ((-this.shipRotation * 180 / Math.PI) % 360 + 360) % 360;
+    const markers = [];
+    const bearingTo = (x, z) => {
+      const dx = x - ship.position.x, dz = z - ship.position.z;
+      let rel = Math.atan2(dx, -dz) * 180 / Math.PI - headingDeg;
+      rel = ((rel + 540) % 360) - 180;
+      return rel;
+    };
+    for (const mill of CAPTURE_WINDMILLS) {
+      const state = this.windmillStates[mill.id];
+      markers.push({
+        rel: bearingTo(mill.x, mill.z), size: 5,
+        color: state?.team === 'red' ? '#ff5555' : state?.team === 'blue' ? '#5599ff' : '#dddddd',
+      });
     }
+    const myTeam = this.localPlayer?.team;
+    const teamOf = {};
+    if (this.gameState?.players) for (const pl of this.gameState.players) teamOf[pl.id] = pl.team;
+    for (const [id, other] of this.players) {
+      if (id === this.localPlayer.id || !other.visible) continue;
+      if (other.position.distanceTo(ship.position) > 700) continue;
+      markers.push({
+        rel: bearingTo(other.position.x, other.position.z), size: 4,
+        color: teamOf[id] === myTeam ? '#44ff88' : '#ff4444',
+      });
+    }
+    ins.updateCompass(headingDeg, markers);
+
+    // Vertical speed (metres per second in the HUD's 3x altitude scale)
+    if (this.prevAltitude === null) this.prevAltitude = ship.position.y;
+    const vs = delta > 0 ? (ship.position.y - this.prevAltitude) / delta * 3 : 0;
+    this.verticalSpeed += (vs - this.verticalSpeed) * Math.min(1, delta * 6);
+    this.prevAltitude = ship.position.y;
+    ins.updateAttitude(this.pitchAngle, ship.rotation.z, ship.position.y * 3, this.verticalSpeed);
+
+    // Terrain / obstacle warning: project the flight path ~1.5s ahead
+    let warn = false;
+    if (!this.crashed && this.crashGrace <= 0) {
+      const fx = -Math.sin(this.shipRotation), fz = -Math.cos(this.shipRotation);
+      const vy = Math.sin(this.pitchAngle) * speed;
+      outer:
+      for (let t = 0.3; t <= 1.5; t += 0.3) {
+        const px = ship.position.x + fx * speed * t;
+        const pz = ship.position.z + fz * speed * t;
+        const py = ship.position.y + vy * t;
+        for (const [, colliders] of this.obstacles) {
+          for (const obs of colliders) {
+            if (py > obs.topY + 2) continue;
+            const dx = px - obs.x, dz = pz - obs.z;
+            const r = obs.radius + GAME_CONFIG.PLANE_COLLISION_RADIUS + 3;
+            if (dx * dx + dz * dz < r * r) { warn = true; break outer; }
+          }
+        }
+      }
+    }
+    ins.setPullUp(warn);
+    if (warn) {
+      this.pullUpBeep -= delta;
+      if (this.pullUpBeep <= 0) { this.pullUpBeep = 0.45; this.playSound('warning'); }
+    } else {
+      this.pullUpBeep = 0;
+    }
+
+    // Screen-edge vignettes: boost rush and low health
+    const boosting = this.controls.boost && this.localPlayer.energy > 0;
+    this.boostVignette += ((boosting ? 1 : 0) - this.boostVignette) * Math.min(1, delta * 5);
+    const damage = this.playerHealth < 45 ? (1 - this.playerHealth / 45) * 0.75 : 0;
+    ins.setVignettes({ boost: this.boostVignette * 0.6, damage });
+
+    this.checkDiscoveries(ship);
+  }
+
+  /** Landmark and village discovery toasts */
+  checkDiscoveries(ship) {
+    for (const [, list] of this.chunkLandmarks) {
+      for (const lm of list) {
+        if (this.discovered.has(lm.id)) continue;
+        const dx = ship.position.x - lm.x, dz = ship.position.z - lm.z;
+        if (dx * dx + dz * dz < 150 * 150) {
+          this.discovered.add(lm.id);
+          this.instruments.toast(lm.icon, `Discovered: ${lm.name}`, lm.subtitle);
+          this.playSound('pickup');
+        }
+      }
+    }
+
+    const cx = Math.floor(ship.position.x / GAME_CONFIG.CHUNK_SIZE);
+    const cz = Math.floor(ship.position.z / GAME_CONFIG.CHUNK_SIZE);
+    const bx = Math.floor(cx / 3), bz = Math.floor(cz / 3);
+    const key = `${bx},${bz}`;
+    if (key !== this.lastBiomeKey) {
+      this.lastBiomeKey = key;
+      if (!this.visitedBlocks.has(key)) {
+        this.visitedBlocks.add(key);
+        const biome = this.getBiome(cx, cz);
+        if (biome === 'village') {
+          this.instruments.toast('🏘️', `Welcome to ${this.villageName(bx, bz)}`, 'Village');
+        } else if (biome === 'waterland') {
+          this.instruments.toast('🌊', `${this.villageName(bx, bz)} Polder`, 'Waterland');
+        }
+      }
+    }
+  }
+
+  villageName(bx, bz) {
+    const names = ['Zonneveld', 'Molendijk', 'Bloemwijk', 'Waterhoek', 'Oosterbeek', 'Lindenhof',
+      'Groenendaal', 'Rozenburg', 'Kerkwijk', 'Zwanenmeer', 'Eikendorp', 'Tulpenveen',
+      'Heidebroek', 'Noorderwaard', 'Vliethoven', 'Brugdorp', 'Zilverdam', 'Wilgenoord'];
+    return names[Math.floor(this.seededRandom(bx * 917 + bz * 331 + 5) * names.length)];
+  }
+
+  updatePhotoCamera(ship, delta) {
+    this.photoAngle += delta * 0.3;
+    const r = 26;
+    this.camera.position.set(
+      ship.position.x + Math.cos(this.photoAngle) * r,
+      ship.position.y + 6 + Math.sin(this.animationTime * 0.5) * 2.5,
+      ship.position.z + Math.sin(this.photoAngle) * r
+    );
+    this.camera.lookAt(ship.position);
+  }
+
+  togglePhotoMode() {
+    this.photoMode = !this.photoMode;
+    this.instruments.setPhotoMode(this.photoMode);
+    if (this.photoMode) {
+      this.photoAngle = this.shipRotation + Math.PI / 2;
+      this.instruments.toast('📷', 'Photo mode', 'C to save a screenshot · P to exit');
+    }
+  }
+
+  /** Slow aerial pan over the airfield behind the login screen */
+  updateIntroCamera() {
+    const a = this.animationTime * 0.06;
+    this.camera.position.set(Math.cos(a) * 150, 42 + Math.sin(a * 1.7) * 6, 30 + Math.sin(a) * 150);
+    this.camera.lookAt(0, 4, 20);
+  }
+
+  /**
+   * Sky, lighting, wind, clouds and every material that reacts to time of
+   * day or weather. Runs every frame, before and after login.
+   */
+  updateEnvironment(delta) {
+    const ship = this.localPlayer ? this.players.get(this.localPlayer.id) : null;
+    const center = ship ? ship.position : this.camera.position;
+
+    // Wind: slowly wandering direction, strength follows the weather
+    this.wind.targetSpeed = this.weatherNow.wind || 7;
+    this.wind.speed += (this.wind.targetSpeed - this.wind.speed) * Math.min(1, delta * 0.2);
+    this.wind.angle += Math.sin(this.animationTime * 0.05) * delta * 0.05;
+    this.wind.x = Math.cos(this.wind.angle) * this.wind.speed;
+    this.wind.z = Math.sin(this.wind.angle) * this.wind.speed;
+
+    if (this.sunLight) this.sunLight.target.position.set(center.x, 0, center.z);
+    this.sky.update(delta, this.camera, this.weatherNow,
+      { sun: this.sunLight, hemi: this.hemiLight, ambient: this.ambientLight },
+      this.renderer, this.animationTime);
+    const sky = this.sky.state;
+
+    this.clouds.update(delta, center, this.wind, sky, this.weatherNow.cover);
+
+    // Ground follows the player; scroll the texture so it stays put in world space
+    if (this.groundPlane) {
+      this.groundPlane.position.x = center.x;
+      this.groundPlane.position.z = center.z;
+      const tile = GAME_CONFIG.GROUND_TILE;
+      this.groundTex.offset.set((center.x / tile) % 1, (-center.z / tile) % 1);
+    }
+    if (this.cloudShadow) {
+      this.cloudShadow.position.x = center.x;
+      this.cloudShadow.position.z = center.z;
+      const tile = GAME_CONFIG.GROUND_SIZE / 2.5;
+      const drift = this.animationTime * 0.012;
+      this.cloudShadow.material.map.offset.set(
+        (center.x / tile + drift * this.wind.x * 0.1) % 1,
+        (-center.z / tile - drift * this.wind.z * 0.1) % 1);
+      this.cloudShadow.material.opacity =
+        0.42 * this.weatherNow.cover * sky.daylight * (1 - this.weatherNow.overcast * 0.6);
+    }
+    if (this.horizonRing) {
+      this.horizonRing.position.x = this.camera.position.x;
+      this.horizonRing.position.z = this.camera.position.z;
+      this.horizonRing.material.color.copy(sky.fogColor).multiplyScalar(0.55);
+    }
+
+    // Materials that react to light and weather
+    const lamp = this.sky.lampFactor;
+    this.mats.glow.emissiveIntensity = 0.05 + lamp * 2.4;
+    this.mats.water.color.setHex(0x17466B).lerp(sky.horizonColor, 0.45 * sky.daylight + 0.1);
+    this.mats.water.normalMap.offset.x += delta * 0.018;
+    this.mats.water.normalMap.offset.y += delta * 0.011;
+    this.mats.water.roughness = 0.14 + this.weatherNow.rain * 0.25;
   }
 
   checkCollisions(ship) {
@@ -3240,6 +3494,8 @@ class Game {
       this.updateTakeoff(delta);
     }
 
+    if (!this.localPlayer) this.updateIntroCamera();
+
     if (this.localPlayer) {
       this.updatePlayer(delta);
 
@@ -3294,7 +3550,18 @@ class Game {
       }
     });
 
-    this.renderer.render(this.scene, this.camera);
+    this.updateEnvironment(delta);
+
+    if (this.postfx) this.postfx.render();
+    else this.renderer.render(this.scene, this.camera);
+
+    if (this.captureRequested) {
+      this.captureRequested = false;
+      if (Instruments.saveScreenshot(this.renderer.domElement)) {
+        this.instruments.toast('📷', 'Screenshot saved', 'Check your downloads folder');
+      }
+    }
+    if (this.instruments) this.instruments.tickFps(delta);
   }
 }
 

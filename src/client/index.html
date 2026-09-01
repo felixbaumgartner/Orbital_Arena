@@ -4,7 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dutch Village Flight - June Skies</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --hud-font: 'Rajdhani', 'Segoe UI', Arial, sans-serif;
+            --glass: rgba(10, 16, 22, 0.55);
+            --glass-border: rgba(255, 255, 255, 0.12);
+            --accent: #FFD23F;
+            --green: #4CAF50;
+            --red: #ff6666;
+            --blue: #77aaff;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -15,7 +28,8 @@
             overflow: hidden;
             background: #000;
             color: #fff;
-            font-family: Arial, sans-serif;
+            font-family: var(--hud-font);
+            letter-spacing: 0.02em;
         }
 
         #game-container {
@@ -37,13 +51,22 @@
             pointer-events: auto;
         }
 
+        .glass {
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            border-radius: 10px;
+        }
+
+        /* ---------- Login ---------- */
         #login-screen {
             position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.8);
+            background: linear-gradient(to bottom, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.7));
             display: flex;
             justify-content: center;
             align-items: center;
@@ -51,32 +74,89 @@
         }
 
         #login-form {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 2rem;
-            border-radius: 8px;
+            background: rgba(8, 14, 20, 0.72);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            padding: 2.4rem 3rem;
+            border-radius: 14px;
             text-align: center;
+            width: min(92vw, 460px);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        #login-form h1 {
+            font-size: 2.4rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            line-height: 1.1;
+        }
+
+        #login-form h2 {
+            color: var(--accent);
+            font-size: 1.05rem;
+            letter-spacing: 0.3em;
+            text-transform: uppercase;
+            margin: 0.3rem 0 1.4rem;
+            font-weight: 600;
+        }
+
+        #login-features {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.35rem 1rem;
+            text-align: left;
+            font-size: 0.9rem;
+            color: #cfd8dc;
+            margin-bottom: 1.4rem;
+        }
+
+        #login-features span::before {
+            content: '✈ ';
+            color: var(--accent);
         }
 
         #username-input {
-            padding: 0.5rem;
-            margin: 1rem;
-            background: rgba(255, 255, 255, 0.2);
-            border: none;
+            padding: 0.7rem 1rem;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.2);
             color: #fff;
-            font-size: 1.2rem;
-            border-radius: 4px;
+            font-size: 1.15rem;
+            border-radius: 8px;
+            font-family: var(--hud-font);
+            letter-spacing: 0.05em;
         }
 
         #start-button {
-            padding: 0.5rem 2rem;
-            background: #4CAF50;
+            margin-top: 0.9rem;
+            padding: 0.75rem 2rem;
+            width: 100%;
+            background: var(--green);
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 8px;
             cursor: pointer;
             font-size: 1.2rem;
+            font-family: var(--hud-font);
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            transition: background 0.2s, transform 0.1s;
         }
 
+        #start-button:hover { background: #5BC15F; transform: translateY(-1px); }
+
+        #login-hint {
+            margin-top: 1rem;
+            font-size: 0.8rem;
+            color: #90a4ae;
+            letter-spacing: 0.08em;
+        }
+
+        #login-hint .key { margin: 0 0.15rem; }
+
+        /* ---------- HUD ---------- */
         #hud {
             padding: 1rem;
             display: none;
@@ -86,19 +166,28 @@
             position: fixed;
             top: 1rem;
             left: 1rem;
-            background: rgba(0, 0, 0, 0.5);
-            padding: 0.5rem;
-            border-radius: 4px;
+            padding: 0.5rem 0.8rem;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        #fps {
+            position: fixed;
+            top: 4.6rem;
+            left: 1rem;
+            padding: 0.15rem 0.6rem;
+            font-size: 0.8rem;
+            color: #9be7a1;
+            display: none;
         }
 
         .team-scores {
             position: fixed;
             top: 1rem;
             right: 1rem;
-            background: rgba(0, 0, 0, 0.5);
-            padding: 0.5rem;
-            border-radius: 4px;
+            padding: 0.5rem 0.8rem;
             text-align: right;
+            font-weight: 600;
         }
 
         .bar-container {
@@ -107,26 +196,49 @@
             width: 220px;
         }
 
-        .health-container {
-            bottom: 3.5rem;
+        .health-container { bottom: 3.5rem; }
+        .speed-container { bottom: 6rem; }
+        .energy-container { bottom: 1rem; }
+
+        .bar-label {
+            font-size: 0.8rem;
+            margin-bottom: 0.25rem;
+            color: #e0e0e0;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
         }
 
-        .speed-container {
-            bottom: 6rem;
-        }
-
-        .speed-bar {
+        .speed-bar,
+        .health-bar,
+        .energy-bar {
             width: 200px;
-            height: 20px;
-            border-radius: 10px;
+            height: 14px;
+            border-radius: 7px;
             overflow: hidden;
-            background: rgba(46, 204, 113, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.15);
         }
+
+        .speed-bar { background: rgba(46, 204, 113, 0.25); }
+        .health-bar { background: rgba(255, 0, 0, 0.25); }
+        .energy-bar { background: rgba(0, 170, 255, 0.25); }
 
         .speed-fill {
             height: 100%;
             background: #2ecc71;
             transition: width 0.2s, background-color 0.3s;
+        }
+
+        .health-fill {
+            height: 100%;
+            background: #ff3b3b;
+            transition: width 0.3s, background-color 0.3s;
+        }
+
+        .energy-fill {
+            height: 100%;
+            background: #00aaff;
+            transition: width 0.3s, background-color 0.3s;
         }
 
         #radar {
@@ -138,85 +250,287 @@
             box-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
         }
 
-        .energy-container {
-            bottom: 1rem;
+        /* Compass tape */
+        #compass {
+            position: fixed;
+            top: 2.9rem;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 440px;
+            height: 44px;
         }
 
-        .bar-label {
-            font-size: 0.8rem;
-            margin-bottom: 0.25rem;
+        /* Attitude indicator cluster */
+        #attitude-cluster {
+            position: fixed;
+            bottom: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            padding: 0.4rem 0.9rem;
+        }
+
+        #attitude {
+            width: 110px;
+            height: 110px;
+        }
+
+        .att-readouts {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+            min-width: 92px;
+        }
+
+        .att-readouts .label {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: #9fb3c8;
+        }
+
+        .att-readouts .value {
+            font-size: 1.35rem;
+            font-weight: 700;
+            line-height: 1;
             color: #fff;
         }
 
-        .health-bar,
-        .energy-bar {
-            width: 200px;
-            height: 20px;
+        #att-vs.up { color: #9be7a1; }
+        #att-vs.down { color: #ff8a80; }
+
+        /* Terrain warning */
+        #pullup {
+            position: fixed;
+            top: 36%;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 2.4rem;
+            font-weight: 700;
+            letter-spacing: 0.4em;
+            color: #ff3b3b;
+            text-shadow: 0 0 18px rgba(255, 40, 40, 0.9);
+            border: 3px solid #ff3b3b;
+            padding: 0.2rem 1.2rem 0.2rem 1.6rem;
+            border-radius: 6px;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #pullup.show {
+            animation: pullupBlink 0.45s steps(2, start) infinite;
+        }
+
+        @keyframes pullupBlink {
+            from { opacity: 1; }
+            to { opacity: 0.15; }
+        }
+
+        /* Vignettes */
+        .vignette {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        #boost-vignette {
+            background: radial-gradient(ellipse at center, rgba(0, 180, 255, 0) 55%, rgba(0, 160, 255, 0.55) 100%);
+        }
+
+        #damage-vignette {
+            background: radial-gradient(ellipse at center, rgba(255, 0, 0, 0) 45%, rgba(170, 0, 0, 0.75) 100%);
+            animation: damagePulse 1.1s ease-in-out infinite alternate;
+        }
+
+        @keyframes damagePulse {
+            from { filter: brightness(0.85); }
+            to { filter: brightness(1.15); }
+        }
+
+        /* Toasts */
+        #toasts {
+            position: fixed;
+            top: 11.2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            align-items: center;
+            pointer-events: none;
+        }
+
+        .toast {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            padding: 0.45rem 1rem 0.45rem 0.7rem;
+            background: rgba(8, 14, 20, 0.78);
+            border: 1px solid rgba(255, 210, 63, 0.45);
             border-radius: 10px;
-            overflow: hidden;
+            min-width: 240px;
+            animation: toastIn 0.3s ease-out, toastOut 0.5s ease-in 4s forwards;
         }
 
-        .health-bar {
-            background: rgba(255, 0, 0, 0.3);
+        .toast-icon { font-size: 1.5rem; }
+        .toast-title { font-weight: 700; font-size: 1rem; letter-spacing: 0.05em; }
+        .toast-sub { font-size: 0.78rem; color: #b0bec5; }
+
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(-10px) scale(0.96); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
         }
 
-        .energy-bar {
-            background: rgba(0, 170, 255, 0.3);
+        @keyframes toastOut {
+            to { opacity: 0; transform: translateY(-6px); }
         }
 
-        .health-fill {
-            height: 100%;
-            background: #ff0000;
-            transition: width 0.3s, background-color 0.3s;
+        /* Settings panel */
+        #settings-panel {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: min(92vw, 400px);
+            padding: 1.6rem 1.8rem;
+            display: none;
+            z-index: 1200;
+            background: rgba(8, 14, 20, 0.92);
         }
 
-        .energy-fill {
-            height: 100%;
-            background: #00aaff;
-            transition: width 0.3s, background-color 0.3s;
+        #settings-panel h2 {
+            font-size: 1.3rem;
+            letter-spacing: 0.25em;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+            color: var(--accent);
         }
+
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 0.6rem 0;
+            font-size: 1rem;
+        }
+
+        .setting-row select {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            padding: 0.3rem 0.5rem;
+            border-radius: 6px;
+            font-family: var(--hud-font);
+            font-size: 0.95rem;
+        }
+
+        .setting-row select option { color: #000; }
+
+        .setting-row input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            accent-color: var(--green);
+        }
+
+        .setting-hint {
+            font-size: 0.78rem;
+            color: #90a4ae;
+            margin-top: 0.8rem;
+            line-height: 1.5;
+        }
+
+        #settings-close {
+            margin-top: 1rem;
+            width: 100%;
+            padding: 0.6rem;
+            background: var(--green);
+            border: none;
+            border-radius: 6px;
+            color: #fff;
+            font-family: var(--hud-font);
+            font-weight: 700;
+            font-size: 1rem;
+            letter-spacing: 0.15em;
+            cursor: pointer;
+        }
+
+        /* Photo mode */
+        body.photo #hud,
+        body.photo #chat {
+            visibility: hidden;
+        }
+
+        body.photo::before,
+        body.photo::after {
+            content: '';
+            position: fixed;
+            left: 0;
+            width: 100%;
+            height: 9vh;
+            background: #000;
+            z-index: 1150;
+            pointer-events: none;
+        }
+
+        body.photo::before { top: 0; }
+        body.photo::after { bottom: 0; }
 
         #tutorial {
             position: fixed;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: rgba(0, 0, 0, 0.95);
+            background: rgba(8, 14, 20, 0.95);
             padding: 2rem;
-            border-radius: 8px;
+            border-radius: 12px;
             text-align: left;
             display: none;
-            max-width: 500px;
-            border: 2px solid #4CAF50;
+            max-width: 520px;
+            border: 2px solid var(--green);
         }
 
         #tutorial h2 {
             text-align: center;
-            color: #4CAF50;
+            color: var(--green);
             margin-bottom: 1rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
         }
 
         #tutorial p {
-            margin: 0.5rem 0;
+            margin: 0.4rem 0;
             line-height: 1.5;
+            font-size: 1rem;
         }
 
         #tutorial strong {
-            color: #4CAF50;
+            color: var(--green);
             display: block;
-            margin-top: 1rem;
-            margin-bottom: 0.5rem;
+            margin-top: 0.8rem;
+            margin-bottom: 0.3rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
         }
 
         #tutorial-close {
             margin-top: 1.5rem;
             padding: 0.75rem 2rem;
-            background: #4CAF50;
+            background: var(--green);
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
             font-size: 1rem;
+            font-family: var(--hud-font);
+            font-weight: 700;
+            letter-spacing: 0.1em;
             display: block;
             margin-left: auto;
             margin-right: auto;
@@ -232,10 +546,9 @@
             position: fixed;
             bottom: 1rem;
             right: 1rem;
-            width: 300px;
-            background: rgba(0, 0, 0, 0.7);
-            border-radius: 4px;
-            padding: 0.5rem;
+            width: 280px;
+            padding: 0.4rem;
+            background: rgba(10, 16, 22, 0.35);
         }
 
         .chat-message {
@@ -249,49 +562,48 @@
             top: 50%;
             left: 1rem;
             transform: translateY(-50%);
-            background: rgba(76, 175, 80, 0.9);
-            border-radius: 8px;
-            padding: 1rem;
+            padding: 0.9rem 1rem;
             font-size: 0.85rem;
             line-height: 1.6;
-            border: 2px solid #2E7D32;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            width: 190px;
         }
 
         #controls-panel h3 {
             margin: 0 0 0.5rem 0;
             color: #fff;
-            font-size: 1rem;
+            font-size: 0.95rem;
             text-align: center;
-            border-bottom: 1px solid #fff;
-            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            padding-bottom: 0.4rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
         }
 
-        #controls-panel .control-section {
-            margin-bottom: 0.75rem;
-        }
-
-        #controls-panel .control-section:last-child {
-            margin-bottom: 0;
-        }
+        #controls-panel .control-section { margin-bottom: 0.6rem; }
+        #controls-panel .control-section:last-child { margin-bottom: 0; }
 
         #controls-panel strong {
-            color: #FFEB3B;
+            color: var(--accent);
             display: block;
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.15rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            font-size: 0.75rem;
         }
 
-        #controls-panel .key {
-            background: rgba(255, 255, 255, 0.2);
-            padding: 0.1rem 0.3rem;
-            border-radius: 3px;
+        .key {
+            background: rgba(255, 255, 255, 0.14);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            padding: 0 0.35rem;
+            border-radius: 4px;
             font-family: monospace;
             font-weight: bold;
             color: #fff;
+            font-size: 0.8rem;
         }
 
         #chat-messages {
-            height: 150px;
+            height: 110px;
             overflow-y: auto;
             padding: 0.5rem;
         }
@@ -300,8 +612,10 @@
             width: 100%;
             padding: 0.5rem;
             background: rgba(255, 255, 255, 0.1);
-            border: none;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
             color: #fff;
+            font-family: var(--hud-font);
         }
 
         .crosshair {
@@ -319,68 +633,63 @@
         .crosshair::after {
             content: '';
             position: absolute;
-            background: #4CAF50;
+            background: var(--green);
         }
 
-        .crosshair::before {
-            width: 2px;
-            height: 20px;
-            left: 9px;
-        }
+        .crosshair::before { width: 2px; height: 20px; left: 9px; }
+        .crosshair::after { width: 20px; height: 2px; top: 9px; }
 
-        .crosshair::after {
-            width: 20px;
-            height: 2px;
-            top: 9px;
-        }
-
-        /* Add focus styles for better keyboard navigation */
         button:focus,
-        input:focus {
-            outline: 2px solid #4CAF50;
+        input:focus,
+        select:focus {
+            outline: 2px solid var(--green);
             outline-offset: 2px;
         }
 
-        /* Weather indicator */
+        /* Environment readout: clock, weather, wind */
         #weather-indicator {
             position: fixed;
-            top: 5.7rem;
+            top: 8.4rem;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.5);
-            padding: 0.2rem 0.9rem;
-            border-radius: 12px;
-            font-size: 0.78rem;
-            color: #ddd;
-            letter-spacing: 0.05rem;
+            padding: 0.25rem 1rem;
+            border-radius: 14px;
+            font-size: 0.85rem;
+            color: #e0e0e0;
+            letter-spacing: 0.06em;
+            display: flex;
+            gap: 0.9rem;
+            white-space: nowrap;
         }
+
+        #weather-indicator span { display: inline-block; }
+        #env-clock { color: var(--accent); font-weight: 700; }
+        #env-wind { color: #9fb3c8; }
 
         /* Windmill status dots */
         #windmill-panel {
             position: fixed;
-            top: 3.1rem;
+            top: 5.9rem;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.5);
-            padding: 0.3rem 0.8rem;
+            padding: 0.2rem 0.9rem;
             border-radius: 12px;
             font-size: 1rem;
             text-align: center;
         }
 
         #windmill-panel .panel-label {
-            font-size: 0.65rem;
+            font-size: 0.62rem;
             color: #aaa;
             text-transform: uppercase;
-            letter-spacing: 0.08rem;
+            letter-spacing: 0.15em;
             display: block;
-            margin-bottom: 2px;
         }
 
         /* Capture progress bar */
         #capture-progress {
             position: fixed;
-            bottom: 6rem;
+            bottom: 9.4rem;
             left: 50%;
             transform: translateX(-50%);
             width: 200px;
@@ -392,7 +701,9 @@
             font-size: 0.8rem;
             color: #fff;
             margin-bottom: 4px;
-            text-shadow: 0 0 6px rgba(0,0,0,0.8);
+            text-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
         }
 
         .capture-bar {
@@ -417,7 +728,6 @@
             left: 0;
             width: 100%;
             height: 100%;
-            /* Red vignette: danger at the edges, view stays readable */
             background: radial-gradient(ellipse at center,
                 rgba(255, 0, 0, 0) 42%, rgba(190, 0, 0, 0.55) 100%);
             display: none;
@@ -431,6 +741,7 @@
             font-size: 3rem;
             font-weight: bold;
             color: #fff;
+            letter-spacing: 0.2em;
             text-shadow: 0 0 18px rgba(255, 40, 40, 0.9);
             animation: crashPulse 0.5s ease-in-out infinite alternate;
         }
@@ -458,7 +769,7 @@
             font-size: 3rem;
             font-weight: bold;
             color: #fff;
-            text-shadow: 0 0 20px #4CAF50, 0 0 40px #4CAF50;
+            text-shadow: 0 0 20px var(--green), 0 0 40px var(--green);
             animation: takeoffPulse 0.8s ease-in-out infinite alternate;
             letter-spacing: 0.3rem;
         }
@@ -484,18 +795,20 @@
             transform: translateX(-50%);
             display: flex;
             gap: 0.4rem;
-            font-weight: bold;
-            font-size: 1.05rem;
+            font-weight: 700;
+            font-size: 1.1rem;
+            letter-spacing: 0.08em;
         }
 
         #score-bar .score-pill {
-            padding: 0.25rem 0.9rem;
+            padding: 0.2rem 0.9rem;
             border-radius: 14px;
-            background: rgba(0, 0, 0, 0.55);
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
         }
 
-        #score-red { color: #ff6666; }
-        #score-blue { color: #77aaff; }
+        #score-red { color: var(--red); }
+        #score-blue { color: var(--blue); }
 
         #score-bar .score-pill.mine {
             outline: 2px solid rgba(255, 255, 255, 0.85);
@@ -506,7 +819,7 @@
             animation: crashPulse 0.6s ease-in-out infinite alternate;
         }
 
-        /* Hitmarker: X at the crosshair when your shot lands */
+        /* Hitmarker */
         #hitmarker {
             position: fixed;
             top: 50%;
@@ -529,9 +842,7 @@
         #hitmarker::before { width: 3px; height: 26px; left: 11.5px; }
         #hitmarker::after { width: 26px; height: 3px; top: 11.5px; }
 
-        #hitmarker.show {
-            animation: hitPop 0.28s ease-out;
-        }
+        #hitmarker.show { animation: hitPop 0.28s ease-out; }
 
         #hitmarker.kill::before,
         #hitmarker.kill::after {
@@ -561,7 +872,7 @@
             background: rgba(0, 0, 0, 0.6);
             padding: 0.2rem 0.7rem;
             border-radius: 10px;
-            font-size: 0.82rem;
+            font-size: 0.85rem;
             animation: feedIn 0.25s ease-out, feedOut 0.6s ease-in 3.9s forwards;
         }
 
@@ -570,27 +881,23 @@
             to { opacity: 1; transform: translateX(0); }
         }
 
-        @keyframes feedOut {
-            to { opacity: 0; }
-        }
+        @keyframes feedOut { to { opacity: 0; } }
 
-        /* Kill banner: your kill, celebrated */
         #kill-banner {
             position: fixed;
             top: 18%;
             left: 50%;
             transform: translateX(-50%);
-            font-size: 1.5rem;
+            font-size: 1.6rem;
             font-weight: bold;
-            color: #FFD23F;
+            letter-spacing: 0.1em;
+            color: var(--accent);
             text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
             opacity: 0;
             pointer-events: none;
         }
 
-        #kill-banner.show {
-            animation: bannerFade 2.4s ease-out forwards;
-        }
+        #kill-banner.show { animation: bannerFade 2.4s ease-out forwards; }
 
         @keyframes bannerFade {
             0% { opacity: 0; transform: translateX(-50%) scale(0.85); }
@@ -600,7 +907,6 @@
             100% { opacity: 0; }
         }
 
-        /* Team banner on join */
         #team-banner {
             position: fixed;
             top: 30%;
@@ -616,8 +922,8 @@
         }
 
         #team-banner.show { opacity: 1; }
-        #team-banner.red { color: #ff6666; }
-        #team-banner.blue { color: #77aaff; }
+        #team-banner.red { color: var(--red); }
+        #team-banner.blue { color: var(--blue); }
 
         /* Match end screen */
         #end-screen {
@@ -634,8 +940,8 @@
         }
 
         #end-card {
-            background: rgba(20, 28, 20, 0.95);
-            border: 2px solid #4CAF50;
+            background: rgba(8, 14, 20, 0.95);
+            border: 2px solid var(--green);
             border-radius: 12px;
             padding: 2.5rem 3.5rem;
             text-align: center;
@@ -647,30 +953,26 @@
             letter-spacing: 0.2rem;
         }
 
-        #end-title.red { color: #ff6666; }
-        #end-title.blue { color: #77aaff; }
+        #end-title.red { color: var(--red); }
+        #end-title.blue { color: var(--blue); }
 
-        #end-score {
-            font-size: 1.5rem;
-            margin-bottom: 0.75rem;
-        }
+        #end-score { font-size: 1.5rem; margin-bottom: 0.75rem; }
+        #end-score .red { color: var(--red); font-weight: bold; }
+        #end-score .blue { color: var(--blue); font-weight: bold; }
 
-        #end-score .red { color: #ff6666; font-weight: bold; }
-        #end-score .blue { color: #77aaff; font-weight: bold; }
-
-        #end-stats {
-            color: #bbb;
-            margin-bottom: 1.75rem;
-        }
+        #end-stats { color: #bbb; margin-bottom: 1.75rem; }
 
         #end-restart {
             padding: 0.75rem 2.5rem;
-            background: #4CAF50;
+            background: var(--green);
             color: white;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             font-size: 1.1rem;
+            font-family: var(--hud-font);
+            font-weight: 700;
+            letter-spacing: 0.1em;
         }
 
         #end-restart:hover { background: #45a049; }
@@ -678,61 +980,77 @@
 </head>
 <body>
     <div id="game-container"></div>
-    
+
     <div id="ui-overlay">
         <div id="login-screen" class="ui-element">
             <div id="login-form">
-                <h1>✈️ Dutch Village Flight</h1>
-                <h2 style="color: #4CAF50; margin-top: 0;">June Skies</h2>
-                <input type="text" id="username-input" placeholder="Enter pilot name" maxlength="15">
+                <h1>Dutch Village Flight</h1>
+                <h2>June Skies</h2>
+                <div id="login-features">
+                    <span>Living day &amp; night cycle</span>
+                    <span>Dynamic weather &amp; storms</span>
+                    <span>Capture the windmills</span>
+                    <span>Dogfight with AI pilots</span>
+                </div>
+                <input type="text" id="username-input" placeholder="Enter pilot name" maxlength="15" autocomplete="off">
                 <button id="start-button">Take Flight</button>
+                <div id="login-hint">
+                    <span class="key">Esc</span> settings &middot;
+                    <span class="key">P</span> photo mode &middot;
+                    <span class="key">C</span> screenshot
+                </div>
             </div>
         </div>
 
         <div id="hud">
-            <div id="controls-panel">
-                <h3>✈️ Flight Controls</h3>
+            <div id="controls-panel" class="glass">
+                <h3>Flight Controls</h3>
                 <div class="control-section">
-                    <strong>Steer:</strong>
+                    <strong>Steer</strong>
                     <span class="key">A</span> / <span class="key">D</span> Turn<br>
                     <span class="key">↑</span> Climb
                     <span class="key">↓</span> Dive
                 </div>
                 <div class="control-section">
-                    <strong>Speed:</strong>
+                    <strong>Speed</strong>
                     <span class="key">W</span> Faster
                     <span class="key">S</span> Slower<br>
                     <span class="key">Shift</span> Boost
                 </div>
                 <div class="control-section">
-                    <strong>Combat:</strong>
+                    <strong>Combat</strong>
                     <span class="key">Space</span> Shoot<br>
                     <span class="key">R</span> Barrel Roll
                 </div>
                 <div class="control-section">
-                    <strong>Other:</strong>
+                    <strong>Other</strong>
+                    <span class="key">Esc</span> Settings
+                    <span class="key">P</span> Photo<br>
                     <span class="key">M</span> Mute
                     <span class="key">Enter</span> Chat
                 </div>
             </div>
 
-            <div class="stats">
+            <div class="stats glass">
                 <div>Kills: <span id="kills">0</span></div>
                 <div>Deaths: <span id="deaths">0</span></div>
             </div>
+            <div id="fps" class="glass">-- FPS</div>
 
             <div id="score-bar">
                 <span id="score-red" class="score-pill">RED 0</span>
                 <span id="score-blue" class="score-pill">0 BLUE</span>
             </div>
 
-            <div class="team-scores">
+            <canvas id="compass" width="440" height="44"></canvas>
+
+            <div class="team-scores glass">
                 <div>Time: <span id="time-remaining">5:00</span></div>
-                <div id="player-list" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
+                <div id="player-list" style="margin-top: 0.5rem; font-size: 0.85rem; font-weight: 500;"></div>
             </div>
 
             <div class="bar-container speed-container">
-                <div class="bar-label">Speed (<span id="speed-value">200 km/h</span>) &middot; Alt <span id="alt-value">90m</span></div>
+                <div class="bar-label">Speed <span id="speed-value">200 km/h</span> &middot; Alt <span id="alt-value">90m</span></div>
                 <div class="speed-bar">
                     <div class="speed-fill" style="width: 50%"></div>
                 </div>
@@ -746,9 +1064,19 @@
             </div>
 
             <div class="bar-container energy-container">
-                <div class="bar-label">Energy (Hold Shift to Boost)</div>
+                <div class="bar-label">Energy (Shift to boost)</div>
                 <div class="energy-bar">
                     <div class="energy-fill" style="width: 100%"></div>
+                </div>
+            </div>
+
+            <div id="attitude-cluster" class="glass">
+                <canvas id="attitude" width="110" height="110"></canvas>
+                <div class="att-readouts">
+                    <span class="label">Altitude</span>
+                    <span class="value" id="att-alt">90 m</span>
+                    <span class="label">Vertical</span>
+                    <span class="value" id="att-vs">• 0 m/s</span>
                 </div>
             </div>
 
@@ -756,12 +1084,17 @@
             <div id="hitmarker"></div>
             <div id="kill-banner"></div>
             <div id="kill-feed"></div>
+            <div id="pullup">PULL UP</div>
 
             <canvas id="radar" width="140" height="140"></canvas>
 
-            <div id="weather-indicator">Clear</div>
+            <div id="weather-indicator" class="glass">
+                <span id="env-clock">☀️ 08:30</span>
+                <span id="env-weather">Clear</span>
+                <span id="env-wind">Wind 25 km/h</span>
+            </div>
 
-            <div id="windmill-panel">
+            <div id="windmill-panel" class="glass">
                 <span class="panel-label">Windmills</span>
                 <span id="windmill-status"></span>
             </div>
@@ -774,20 +1107,60 @@
             </div>
         </div>
 
+        <div id="boost-vignette" class="vignette"></div>
+        <div id="damage-vignette" class="vignette"></div>
+        <div id="toasts"></div>
+
+        <div id="settings-panel" class="ui-element glass">
+            <h2>Settings</h2>
+            <div class="setting-row">
+                <label for="set-quality">Graphics quality</label>
+                <select id="set-quality">
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="ultra">Ultra</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <label for="set-bloom">Bloom glow</label>
+                <input type="checkbox" id="set-bloom" checked>
+            </div>
+            <div class="setting-row">
+                <label for="set-time">Time of day</label>
+                <select id="set-time">
+                    <option value="auto">Live cycle</option>
+                    <option value="dawn">Dawn</option>
+                    <option value="noon">Midday</option>
+                    <option value="golden">Golden hour</option>
+                    <option value="night">Night</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <label for="set-fps">Show FPS</label>
+                <input type="checkbox" id="set-fps">
+            </div>
+            <div class="setting-hint">
+                Low disables shadows and bloom for older laptops. Ultra widens the view distance and sharpens shadows.
+                Press <span class="key">P</span> in flight for photo mode and <span class="key">C</span> to save a screenshot.
+            </div>
+            <button id="settings-close">Back to flight</button>
+        </div>
+
         <div id="tutorial" class="ui-element">
             <h2>How to Fly</h2>
             <p>Your plane always flies forward — steer it!</p>
-            <p><strong>Steering:</strong></p>
+            <p><strong>Steering</strong></p>
             <p>A / D - Bank left &amp; right</p>
             <p>↑ / ↓ - Climb &amp; dive (fly OVER buildings, or crash into them!)</p>
-            <p><strong>Speed:</strong></p>
-            <p>W - Faster | S - Slower</p>
-            <p>Shift - Boost (drains energy)</p>
-            <p><strong>Combat:</strong></p>
+            <p><strong>Speed</strong></p>
+            <p>W - Faster | S - Slower | Shift - Boost (drains energy)</p>
+            <p><strong>Combat</strong></p>
             <p>Space - Shoot | R - Barrel roll dodge</p>
-            <p><strong>Win:</strong></p>
+            <p><strong>Win</strong></p>
             <p>Capture windmills by circling them, and shoot down the enemy team.</p>
-            <p><strong>Tip:</strong> Fly through glowing tulip rings for power-ups! 🌷</p>
+            <p><strong>Explore</strong></p>
+            <p>Watch the compass for objectives, heed the PULL UP warning, and discover castles, lighthouses and wind farms. 🌷 Fly through glowing tulip rings for power-ups!</p>
             <button id="tutorial-close">Take off! 🛫</button>
         </div>
 
@@ -802,7 +1175,7 @@
             </div>
         </div>
 
-        <div id="chat" class="ui-element">
+        <div id="chat" class="ui-element glass">
             <div id="chat-messages"></div>
             <input type="text" id="chat-input" placeholder="Press Enter to chat">
         </div>
@@ -819,4 +1192,4 @@
 
     <script src="bundle.js"></script>
 </body>
-</html> 
+</html>

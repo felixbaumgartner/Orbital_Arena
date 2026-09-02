@@ -14,7 +14,7 @@ import { Instruments } from './ui/instruments.js';
 // Game constants
 const GAME_CONFIG = {
   CAMERA_FOV: 75,
-  CAMERA_NEAR: 0.1,
+  CAMERA_NEAR: 0.5,
   CAMERA_FAR: 2000,
   CAMERA_DISTANCE: 20,
   CAMERA_HEIGHT: 10,
@@ -472,7 +472,11 @@ class Game {
     const repeat = GAME_CONFIG.GROUND_SIZE / GAME_CONFIG.GROUND_TILE;
     this.groundTex.repeat.set(repeat, repeat);
     const grassGeo = new THREE.PlaneGeometry(GAME_CONFIG.GROUND_SIZE, GAME_CONFIG.GROUND_SIZE, 1, 1);
-    const grassMat = new THREE.MeshStandardMaterial({ map: this.groundTex, roughness: 0.95 });
+    const grassMat = new THREE.MeshStandardMaterial({
+      map: this.groundTex, roughness: 0.95,
+      // Nudge the base ground back in depth so the overlays never z-fight it
+      polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4,
+    });
     this.groundMat = grassMat;
     this.groundPlane = new THREE.Mesh(grassGeo, grassMat);
     this.groundPlane.rotation.x = -Math.PI / 2;
@@ -488,7 +492,7 @@ class Game {
     this.cloudShadow = new THREE.Mesh(
       new THREE.PlaneGeometry(GAME_CONFIG.GROUND_SIZE, GAME_CONFIG.GROUND_SIZE), shadowMat);
     this.cloudShadow.rotation.x = -Math.PI / 2;
-    this.cloudShadow.position.y = 0.12;
+    this.cloudShadow.position.y = 0.75;
     this.cloudShadow.renderOrder = 2;
     this.scene.add(this.cloudShadow);
 
@@ -604,7 +608,7 @@ class Game {
       batch.add(soil ? 'soil' : 'grassPatch', {
         geo: new THREE.PlaneGeometry(pw, pd),
         color: tints[Math.floor(rnd(ps + 5) * tints.length)],
-        rx: -Math.PI / 2, x: px, y: 0.02 + i * 0.003, z: pz,
+        rx: -Math.PI / 2, x: px, y: 0.15 + i * 0.03, z: pz,
       });
     }
 
@@ -706,7 +710,7 @@ class Game {
           geo: new THREE.PlaneGeometry(fw, fd),
           color: ploughed ? soilTints[Math.floor(rnd(s + 5) * soilTints.length)]
             : cropTints[Math.floor(rnd(s + 5) * cropTints.length)],
-          rx: -Math.PI / 2, x, y: 0.05 + i * 0.002, z,
+          rx: -Math.PI / 2, x, y: 0.3 + i * 0.03, z,
         });
         if (high) addFence(batch, x, z, fw, fd);
       }
@@ -776,10 +780,10 @@ class Game {
       const canalW = 12 + rnd(703) * 6;
 
       if (canalAlongX) {
-        batch.add('water', { geo: new THREE.PlaneGeometry(CS, canalW), rx: -Math.PI / 2, x: baseX + CS / 2, y: 0.03, z: canalZ });
+        batch.add('water', { geo: new THREE.PlaneGeometry(CS, canalW), rx: -Math.PI / 2, x: baseX + CS / 2, y: 0.22, z: canalZ });
         // Banks
-        batch.add('soil', { geo: new THREE.PlaneGeometry(CS, 2.5), color: 0x8A7A55, rx: -Math.PI / 2, x: baseX + CS / 2, y: 0.035, z: canalZ - canalW / 2 - 1 });
-        batch.add('soil', { geo: new THREE.PlaneGeometry(CS, 2.5), color: 0x8A7A55, rx: -Math.PI / 2, x: baseX + CS / 2, y: 0.035, z: canalZ + canalW / 2 + 1 });
+        batch.add('soil', { geo: new THREE.PlaneGeometry(CS, 2.5), color: 0x8A7A55, rx: -Math.PI / 2, x: baseX + CS / 2, y: 0.24, z: canalZ - canalW / 2 - 1 });
+        batch.add('soil', { geo: new THREE.PlaneGeometry(CS, 2.5), color: 0x8A7A55, rx: -Math.PI / 2, x: baseX + CS / 2, y: 0.24, z: canalZ + canalW / 2 + 1 });
         // Poplars along the far bank
         for (let x = baseX + 6; x < baseX + CS; x += 13) {
           colliders.push(addTree(batch, 'poplar', x, canalZ + canalW / 2 + 6, 0.9 + rnd(x) * 0.35, seed + x));
@@ -791,9 +795,9 @@ class Game {
           batch.add('metal', { geo: new THREE.BoxGeometry(0.25, 1.2, canalW + 4), color: 0x4A4A4A, x: bx + 3.3, y: 2.2, z: canalZ });
         }
       } else {
-        batch.add('water', { geo: new THREE.PlaneGeometry(canalW, CS), rx: -Math.PI / 2, x: canalX, y: 0.03, z: baseZ + CS / 2 });
-        batch.add('soil', { geo: new THREE.PlaneGeometry(2.5, CS), color: 0x8A7A55, rx: -Math.PI / 2, x: canalX - canalW / 2 - 1, y: 0.035, z: baseZ + CS / 2 });
-        batch.add('soil', { geo: new THREE.PlaneGeometry(2.5, CS), color: 0x8A7A55, rx: -Math.PI / 2, x: canalX + canalW / 2 + 1, y: 0.035, z: baseZ + CS / 2 });
+        batch.add('water', { geo: new THREE.PlaneGeometry(canalW, CS), rx: -Math.PI / 2, x: canalX, y: 0.22, z: baseZ + CS / 2 });
+        batch.add('soil', { geo: new THREE.PlaneGeometry(2.5, CS), color: 0x8A7A55, rx: -Math.PI / 2, x: canalX - canalW / 2 - 1, y: 0.24, z: baseZ + CS / 2 });
+        batch.add('soil', { geo: new THREE.PlaneGeometry(2.5, CS), color: 0x8A7A55, rx: -Math.PI / 2, x: canalX + canalW / 2 + 1, y: 0.24, z: baseZ + CS / 2 });
         for (let z = baseZ + 6; z < baseZ + CS; z += 13) {
           colliders.push(addTree(batch, 'poplar', canalX + canalW / 2 + 6, z, 0.9 + rnd(z) * 0.35, seed + z));
         }
@@ -806,7 +810,7 @@ class Game {
         const x = baseX + 25 + rnd(s + 1) * (CS - 50);
         const z = baseZ + 25 + rnd(s + 2) * (CS - 50);
         const r = 8 + rnd(s + 3) * 12;
-        batch.add('water', { geo: new THREE.CircleGeometry(r, 20), rx: -Math.PI / 2, x, y: 0.04, z });
+        batch.add('water', { geo: new THREE.CircleGeometry(r, 20), rx: -Math.PI / 2, x, y: 0.22, z });
         if (high) {
           if (r > 12) this.addRowboat(x, z, r, chunkKey, objects, seed + i);
           for (let j = 0; j < 14; j++) {
@@ -1071,7 +1075,7 @@ class Game {
         color: palette[(startColor + i) % palette.length],
         rx: -Math.PI / 2,
         x: (i - numStripes / 2) * stripeW,
-        y: 0.06 + i * 0.002,
+        y: 0.45,
       });
     }
 
@@ -1275,7 +1279,7 @@ class Game {
       new THREE.MeshStandardMaterial({ color: 0x2E6B8A, roughness: 0.3, metalness: 0.4 })
     );
     lake.rotation.x = -Math.PI / 2;
-    lake.position.y = 0.05;
+    lake.position.y = 0.22;
     group.add(lake);
 
     group.position.set(x, 0, z);
@@ -1336,10 +1340,10 @@ class Game {
           if (a.pos > a.max) a.pos = a.min;
           if (a.pos < a.min) a.pos = a.max;
           if (a.axis === 'x') {
-            a.mesh.position.set(a.pos, 0.1, a.lane);
+            a.mesh.position.set(a.pos, 0.5, a.lane);
             a.mesh.rotation.y = a.dir > 0 ? 0 : Math.PI;
           } else {
-            a.mesh.position.set(a.lane, 0.1, a.pos);
+            a.mesh.position.set(a.lane, 0.5, a.pos);
             a.mesh.rotation.y = a.dir > 0 ? -Math.PI / 2 : Math.PI / 2;
           }
         }
@@ -1776,7 +1780,7 @@ class Game {
       });
       const ring = new THREE.Mesh(ringGeo, ringMat);
       ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.15;
+      ring.position.y = 0.6;
       group.add(ring);
 
       // Beacon light on top
@@ -1906,7 +1910,7 @@ class Game {
     const runwayMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.9 });
     const runway = new THREE.Mesh(runwayGeo, runwayMat);
     runway.rotation.x = -Math.PI / 2;
-    runway.position.set(0, 0.06, 0);
+    runway.position.set(0, 0.4, 0);
     this.scene.add(runway);
 
     // White center line dashes
@@ -1915,7 +1919,7 @@ class Game {
       const dashGeo = new THREE.PlaneGeometry(0.6, 5);
       const dash = new THREE.Mesh(dashGeo, dashMat);
       dash.rotation.x = -Math.PI / 2;
-      dash.position.set(0, 0.07, i);
+      dash.position.set(0, 0.46, i);
       this.scene.add(dash);
     }
 
@@ -1926,11 +1930,11 @@ class Game {
     for (let i = -rl / 2; i <= rl / 2; i += 15) {
       const lightGeo = new THREE.SphereGeometry(0.3, 6, 6);
       const leftLight = new THREE.Mesh(lightGeo, lightMat);
-      leftLight.position.set(-rw / 2 - 0.5, 0.4, i);
+      leftLight.position.set(-rw / 2 - 0.5, 0.75, i);
       this.scene.add(leftLight);
 
       const rightLight = new THREE.Mesh(lightGeo, lightMat);
-      rightLight.position.set(rw / 2 + 0.5, 0.4, i);
+      rightLight.position.set(rw / 2 + 0.5, 0.75, i);
       this.scene.add(rightLight);
     }
 
@@ -1940,7 +1944,7 @@ class Game {
     });
     for (let x = -rw / 2; x <= rw / 2; x += 3) {
       const gLight = new THREE.Mesh(new THREE.SphereGeometry(0.3, 6, 6), greenMat);
-      gLight.position.set(x, 0.4, rl / 2);
+      gLight.position.set(x, 0.75, rl / 2);
       this.scene.add(gLight);
     }
 
@@ -1950,7 +1954,7 @@ class Game {
     });
     for (let x = -rw / 2; x <= rw / 2; x += 3) {
       const rLight = new THREE.Mesh(new THREE.SphereGeometry(0.3, 6, 6), redMat);
-      rLight.position.set(x, 0.4, -rl / 2);
+      rLight.position.set(x, 0.75, -rl / 2);
       this.scene.add(rLight);
     }
 
@@ -3358,6 +3362,30 @@ class Game {
     }
   }
 
+  /**
+   * Moves the shadow frustum in whole shadow-map texels. Without this the
+   * frustum slides continuously with the plane and every shadow edge
+   * shimmers ("shadow swimming").
+   */
+  snapShadowFrustum() {
+    const light = this.sunLight;
+    if (!light || !light.castShadow) return;
+    const cam = light.shadow.camera;
+    const texel = (cam.right - cam.left) / light.shadow.mapSize.x;
+    const dir = this._shadowDir || (this._shadowDir = new THREE.Vector3());
+    const right = this._shadowRight || (this._shadowRight = new THREE.Vector3());
+    const up = this._shadowUp || (this._shadowUp = new THREE.Vector3());
+    dir.subVectors(light.target.position, light.position).normalize();
+    right.crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
+    up.crossVectors(dir, right).normalize();
+    const anchor = light.target.position;
+    const a = anchor.dot(right), b = anchor.dot(up);
+    const da = Math.round(a / texel) * texel - a;
+    const db = Math.round(b / texel) * texel - b;
+    anchor.addScaledVector(right, da).addScaledVector(up, db);
+    light.position.addScaledVector(right, da).addScaledVector(up, db);
+  }
+
   /** Slow aerial pan over the airfield behind the login screen */
   updateIntroCamera() {
     const a = this.animationTime * 0.06;
@@ -3385,6 +3413,7 @@ class Game {
       { sun: this.sunLight, hemi: this.hemiLight, ambient: this.ambientLight },
       this.renderer, this.animationTime);
     const sky = this.sky.state;
+    this.snapShadowFrustum();
 
     this.clouds.update(delta, center, this.wind, sky, this.weatherNow.cover);
 

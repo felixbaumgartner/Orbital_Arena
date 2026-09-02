@@ -300,9 +300,9 @@ export function makeRoad(mats, axis, start, pos, length, width = 8) {
   mesh.rotation.x = -Math.PI / 2;
   if (axis === 'x') {
     mesh.rotation.z = Math.PI / 2;
-    mesh.position.set(start + length / 2, 0.09, pos);
+    mesh.position.set(start + length / 2, 0.5, pos);
   } else {
-    mesh.position.set(pos, 0.09, start + length / 2);
+    mesh.position.set(pos, 0.5, start + length / 2);
   }
   mesh.receiveShadow = true;
   return mesh;

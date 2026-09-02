@@ -173,7 +173,7 @@
 
         #fps {
             position: fixed;
-            top: 4.6rem;
+            top: 1rem;
             left: 1rem;
             padding: 0.15rem 0.6rem;
             font-size: 0.8rem;
@@ -253,7 +253,7 @@
         /* Compass tape */
         #compass {
             position: fixed;
-            top: 2.9rem;
+            top: 3.7rem;
             left: 50%;
             transform: translateX(-50%);
             width: 440px;
@@ -357,7 +357,7 @@
         /* Toasts */
         #toasts {
             position: fixed;
-            top: 11.2rem;
+            top: 9.6rem;
             left: 50%;
             transform: translateX(-50%);
             display: flex;
@@ -649,7 +649,7 @@
         /* Environment readout: clock, weather, wind */
         #weather-indicator {
             position: fixed;
-            top: 8.4rem;
+            top: 6.8rem;
             left: 50%;
             transform: translateX(-50%);
             padding: 0.25rem 1rem;
@@ -689,7 +689,7 @@
         /* Capture progress bar */
         #capture-progress {
             position: fixed;
-            bottom: 9.4rem;
+            bottom: 14rem;
             left: 50%;
             transform: translateX(-50%);
             width: 200px;
@@ -794,11 +794,240 @@
             left: 50%;
             transform: translateX(-50%);
             display: flex;
-            gap: 0.4rem;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.25rem;
             font-weight: 700;
             font-size: 1.1rem;
             letter-spacing: 0.08em;
         }
+
+        #score-row { display: flex; gap: 0.4rem; align-items: center; }
+
+        #score-kd {
+            font-size: 0.85rem;
+            color: #e0e0e0;
+            padding: 0.2rem 0.7rem;
+        }
+
+        #mill-dots {
+            font-size: 0.9rem;
+            letter-spacing: 0.25em;
+            line-height: 1;
+            padding: 0.1rem 0.6rem;
+            border-radius: 10px;
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+        }
+
+        /* In-flight coaching prompt */
+        #hint {
+            position: fixed;
+            bottom: 9.6rem;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 0.5rem 1.2rem;
+            font-size: 1.15rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            border: 1px solid rgba(255, 210, 63, 0.5);
+            display: none;
+            white-space: nowrap;
+            animation: hintIn 0.35s ease-out;
+        }
+
+        #hint .hint-step {
+            display: block;
+            font-size: 0.7rem;
+            color: var(--accent);
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            margin-bottom: 0.15rem;
+        }
+
+        #hint .hint-skip {
+            display: block;
+            font-size: 0.7rem;
+            color: #90a4ae;
+            margin-top: 0.2rem;
+            font-weight: 500;
+        }
+
+        @keyframes hintIn {
+            from { opacity: 0; transform: translate(-50%, 8px); }
+            to { opacity: 1; transform: translate(-50%, 0); }
+        }
+
+        /* Objective waypoint marker */
+        #waypoint {
+            position: fixed;
+            left: 0;
+            top: 0;
+            display: none;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 5;
+        }
+
+        #waypoint .wp-diamond {
+            width: 16px;
+            height: 16px;
+            margin: 0 auto;
+            border: 2.5px solid currentColor;
+            transform: rotate(45deg);
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.6);
+        }
+
+        #waypoint .wp-arrow {
+            width: 0;
+            height: 0;
+            margin: 0 auto;
+            border-left: 11px solid transparent;
+            border-right: 11px solid transparent;
+            border-bottom: 20px solid currentColor;
+            filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.7));
+            display: none;
+        }
+
+        #waypoint.offscreen .wp-diamond { display: none; }
+        #waypoint.offscreen .wp-arrow { display: block; }
+
+        #waypoint .wp-label {
+            margin-top: 4px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            color: #fff;
+            text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+            white-space: nowrap;
+        }
+
+        /* Damage direction indicator */
+        #damage-dir {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 260px;
+            height: 260px;
+            margin: -130px 0 0 -130px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.6s;
+        }
+
+        #damage-dir::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 0;
+            width: 90px;
+            height: 26px;
+            margin-left: -45px;
+            border-radius: 45px 45px 0 0;
+            background: radial-gradient(ellipse at 50% 100%, rgba(255, 40, 40, 0) 40%, rgba(255, 40, 40, 0.9) 100%);
+        }
+
+        #damage-dir.show { opacity: 1; transition: none; }
+
+        /* Plane name tags */
+        #tags { position: fixed; top: 0; left: 0; pointer-events: none; }
+
+        .tag {
+            position: absolute;
+            transform: translate(-50%, -100%);
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            white-space: nowrap;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 6px rgba(0, 0, 0, 0.6);
+            text-align: center;
+        }
+
+        .tag.red { color: #ff7b7b; }
+        .tag.blue { color: #8fbbff; }
+        .tag.blue.mine-team { color: #7dffb0; }
+        .tag.red.mine-team { color: #7dffb0; }
+
+        .tag .tag-bot {
+            font-size: 0.6rem;
+            padding: 0 0.3rem;
+            border: 1px solid currentColor;
+            border-radius: 3px;
+            margin-left: 0.3rem;
+            vertical-align: middle;
+        }
+
+        .tag .tag-dist {
+            display: block;
+            font-size: 0.68rem;
+            color: #ddd;
+            font-weight: 600;
+        }
+
+        /* Hold-Tab scoreboard */
+        #scoreboard {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            min-width: 420px;
+            padding: 1rem 1.4rem;
+            display: none;
+            z-index: 900;
+            background: rgba(8, 14, 20, 0.9);
+        }
+
+        #scoreboard h2 {
+            font-size: 1rem;
+            letter-spacing: 0.25em;
+            text-transform: uppercase;
+            color: var(--accent);
+            margin-bottom: 0.6rem;
+            text-align: center;
+        }
+
+        #scoreboard table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+        #scoreboard th { font-size: 0.7rem; letter-spacing: 0.15em; text-transform: uppercase; color: #90a4ae; text-align: left; padding: 0.2rem 0.5rem; }
+        #scoreboard td { padding: 0.25rem 0.5rem; border-top: 1px solid rgba(255, 255, 255, 0.07); }
+        #scoreboard td.num { text-align: right; font-variant-numeric: tabular-nums; }
+        #scoreboard tr.red td:first-child { color: var(--red); }
+        #scoreboard tr.blue td:first-child { color: var(--blue); }
+        #scoreboard tr.me td { background: rgba(255, 210, 63, 0.08); }
+        #scoreboard .bot-chip { font-size: 0.6rem; border: 1px solid #90a4ae; color: #90a4ae; border-radius: 3px; padding: 0 0.3rem; margin-left: 0.4rem; }
+
+        /* Controls recall chip */
+        #controls-hint {
+            position: fixed;
+            bottom: 1rem;
+            left: 250px;
+            font-size: 0.75rem;
+            color: #b0bec5;
+            padding: 0.2rem 0.6rem;
+            display: none;
+        }
+
+        .team-scores .sub { font-size: 0.7rem; color: #90a4ae; letter-spacing: 0.1em; margin-top: 0.15rem; }
+
+        /* Collapsed chat: just the last few lines, no box, until Enter */
+        #chat.collapsed {
+            background: transparent;
+            border-color: transparent;
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+        }
+
+        #chat.collapsed #chat-input { display: none; }
+        #chat.collapsed #chat-messages { height: auto; max-height: 80px; overflow: hidden; }
+        #chat.collapsed .chat-message { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); }
+        #chat.collapsed .chat-message:not(:nth-last-child(-n+3)) { display: none; }
+
+        /* Simple HUD: only what you need to fly and fight */
+        body.simple #attitude-cluster,
+        body.simple #weather-indicator,
+        body.simple #controls-panel,
+        body.simple #kill-feed,
+        body.simple #controls-hint { display: none !important; }
 
         #score-bar .score-pill {
             padding: 0.2rem 0.9rem;
@@ -1023,30 +1252,35 @@
                     <span class="key">R</span> Barrel Roll
                 </div>
                 <div class="control-section">
+                    <strong>Mouse</strong>
+                    Click the world to fly with the mouse<br>
+                    <span class="key">LMB</span> Shoot
+                </div>
+                <div class="control-section">
                     <strong>Other</strong>
-                    <span class="key">Esc</span> Settings
-                    <span class="key">P</span> Photo<br>
-                    <span class="key">M</span> Mute
-                    <span class="key">Enter</span> Chat
+                    <span class="key">Tab</span> Scores
+                    <span class="key">Esc</span> Settings<br>
+                    <span class="key">P</span> Photo
+                    <span class="key">H</span> Hide this
                 </div>
             </div>
 
-            <div class="stats glass">
-                <div>Kills: <span id="kills">0</span></div>
-                <div>Deaths: <span id="deaths">0</span></div>
-            </div>
             <div id="fps" class="glass">-- FPS</div>
 
             <div id="score-bar">
-                <span id="score-red" class="score-pill">RED 0</span>
-                <span id="score-blue" class="score-pill">0 BLUE</span>
+                <div id="score-row">
+                    <span id="score-red" class="score-pill">RED 0</span>
+                    <span id="score-kd" class="score-pill">K <span id="kills">0</span> &middot; D <span id="deaths">0</span></span>
+                    <span id="score-blue" class="score-pill">0 BLUE</span>
+                </div>
+                <div id="mill-dots" title="Windmills"><span id="windmill-status"></span></div>
             </div>
 
             <canvas id="compass" width="440" height="44"></canvas>
 
             <div class="team-scores glass">
                 <div>Time: <span id="time-remaining">5:00</span></div>
-                <div id="player-list" style="margin-top: 0.5rem; font-size: 0.85rem; font-weight: 500;"></div>
+                <div class="sub">TAB &middot; SCOREBOARD</div>
             </div>
 
             <div class="bar-container speed-container">
@@ -1081,6 +1315,11 @@
             </div>
 
             <div class="crosshair"></div>
+            <div id="damage-dir"></div>
+            <div id="tags"></div>
+            <div id="waypoint"><div class="wp-arrow"></div><div class="wp-diamond"></div><div class="wp-label"></div></div>
+            <div id="hint" class="glass"></div>
+            <div id="controls-hint" class="glass"><span class="key">H</span> controls</div>
             <div id="hitmarker"></div>
             <div id="kill-banner"></div>
             <div id="kill-feed"></div>
@@ -1094,17 +1333,20 @@
                 <span id="env-wind">Wind 25 km/h</span>
             </div>
 
-            <div id="windmill-panel" class="glass">
-                <span class="panel-label">Windmills</span>
-                <span id="windmill-status"></span>
-            </div>
-
             <div id="capture-progress">
                 <div id="capture-label"></div>
                 <div class="capture-bar">
                     <div id="capture-fill"></div>
                 </div>
             </div>
+        </div>
+
+        <div id="scoreboard" class="glass">
+            <h2>Scoreboard</h2>
+            <table>
+                <thead><tr><th>Pilot</th><th>Team</th><th class="num">Kills</th><th class="num">Deaths</th></tr></thead>
+                <tbody id="scoreboard-body"></tbody>
+            </table>
         </div>
 
         <div id="boost-vignette" class="vignette"></div>
@@ -1137,6 +1379,14 @@
                 </select>
             </div>
             <div class="setting-row">
+                <label for="set-mouse">Mouse steering (click to fly)</label>
+                <input type="checkbox" id="set-mouse" checked>
+            </div>
+            <div class="setting-row">
+                <label for="set-simple">Simple HUD</label>
+                <input type="checkbox" id="set-simple">
+            </div>
+            <div class="setting-row">
                 <label for="set-fps">Show FPS</label>
                 <input type="checkbox" id="set-fps">
             </div>
@@ -1148,19 +1398,12 @@
         </div>
 
         <div id="tutorial" class="ui-element">
-            <h2>How to Fly</h2>
-            <p>Your plane always flies forward — steer it!</p>
-            <p><strong>Steering</strong></p>
-            <p>A / D - Bank left &amp; right</p>
-            <p>↑ / ↓ - Climb &amp; dive (fly OVER buildings, or crash into them!)</p>
-            <p><strong>Speed</strong></p>
-            <p>W - Faster | S - Slower | Shift - Boost (drains energy)</p>
-            <p><strong>Combat</strong></p>
-            <p>Space - Shoot | R - Barrel roll dodge</p>
+            <h2>Welcome, pilot</h2>
+            <p>Your plane always flies forward. Steer it with the <strong style="display:inline">mouse</strong> (click the world) or <strong style="display:inline">A / D</strong>, climb and dive with <strong style="display:inline">↑ / ↓</strong>.</p>
             <p><strong>Win</strong></p>
-            <p>Capture windmills by circling them, and shoot down the enemy team.</p>
-            <p><strong>Explore</strong></p>
-            <p>Watch the compass for objectives, heed the PULL UP warning, and discover castles, lighthouses and wind farms. 🌷 Fly through glowing tulip rings for power-ups!</p>
+            <p>Follow the yellow marker to a windmill and circle it to capture it. Owned windmills score every few seconds. Shooting down enemy planes scores too.</p>
+            <p><strong>Relax</strong></p>
+            <p>Bots leave you alone for your first minute in the air, and we'll walk you through the controls once you're airborne.</p>
             <button id="tutorial-close">Take off! 🛫</button>
         </div>
 

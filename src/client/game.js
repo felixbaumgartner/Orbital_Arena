@@ -27,9 +27,9 @@ const GAME_CONFIG = {
 
   PROJECTILE_DESPAWN_DIST: 250,
 
-  FLIGHT_HEIGHT: 30,
+  FLIGHT_HEIGHT: 42,          // cruise altitude: above spires, lighthouses and poplars
   PLANE_COLLISION_RADIUS: 4,
-  CRASH_DURATION: 2200,
+  CRASH_DURATION: 1400,
   CRASH_HEALTH_PENALTY: 20,   // must match server CRASH_DAMAGE
   CRASH_GRACE: 2.0,           // seconds of collision immunity after a crash respawn
   PROJECTILE_SPEED: 120,
@@ -40,7 +40,10 @@ const GAME_CONFIG = {
   MAX_ALTITUDE: 110,          // ceiling
   MAX_PITCH: 0.5,             // rad of nose-up/down at full climb/dive input
   PITCH_SMOOTHING: 5,         // how quickly pitch eases toward input
-  RESPAWN_ALTITUDE: 50,       // post-crash respawn height (above every obstacle)
+  RESPAWN_ALTITUDE: 60,       // post-crash climb-out height (above every obstacle)
+  MOUSE_SENSITIVITY: 0.0022,  // stick deflection per pixel of mouse travel
+  MOUSE_STICK_DECAY: 2.2,     // how quickly the virtual stick re-centres (per second)
+  CONTROLS_PANEL_SECONDS: 25, // the key legend hides itself after this long in the air
 
   // Contrails & Smoke
   TRAIL_MAX_POINTS: 80,
@@ -251,6 +254,18 @@ class Game {
     this.verticalSpeed = 0;
     this.boostVignette = 0;
 
+    // Mouse steering (pointer lock) as a self-centring virtual stick
+    this.mouseStick = { turn: 0, pitch: 0 };
+    this.pointerLocked = false;
+
+    // Onboarding, HUD state, match rules
+    this.onboarding = null;
+    this.controlsPanelTimer = 0;
+    this.controlsPanelHidden = false;
+    this.scoreboardOpen = false;
+    this.rules = { killScore: 5, millTickSeconds: 5 };
+    this.firstFlight = false;
+
     this.init();
 
     // Debug handle (also used by automated QA)
@@ -387,17 +402,62 @@ class Game {
     const hud = document.getElementById('hud');
     const chatInput = document.getElementById('chat-input');
 
-    startButton.addEventListener('click', () => {
-      this.initAudio(); // requires a user gesture
+    const start = () => {
+      this.initAudio(); // requires a user gesture (resumed later if not)
       const username = this.sanitizeInput(usernameInput.value.trim());
       if (!this.isValidUsername(username)) {
         alert(`Username must be between ${GAME_CONFIG.USERNAME_MIN_LENGTH} and ${GAME_CONFIG.USERNAME_MAX_LENGTH} characters and contain only letters, numbers, and spaces.`);
         return;
       }
+      try { localStorage.setItem('dvf.name', username); } catch (e) { /* ignore */ }
       this.connectToServer(username);
       loginScreen.style.display = 'none';
       hud.style.display = 'block';
+    };
+    startButton.addEventListener('click', start);
+
+    // Remember the pilot; "Fly Again" skips the login screen entirely
+    try {
+      const saved = localStorage.getItem('dvf.name');
+      if (saved) usernameInput.value = saved;
+      if (localStorage.getItem('dvf.autoStart') === '1' && saved) {
+        localStorage.removeItem('dvf.autoStart');
+        setTimeout(start, 50);
+      }
+    } catch (e) { /* ignore */ }
+
+    // Mouse steering: click the world to grab the pointer, Esc releases it
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener('click', () => {
+      if (!this.localPlayer || !this.controlsEnabled) return;
+      if (this.instruments?.settings.mouse === false) return;
+      if (document.pointerLockElement !== canvas) {
+        try { canvas.requestPointerLock(); } catch (e) { /* unsupported */ }
+      }
     });
+    document.addEventListener('pointerlockchange', () => {
+      this.pointerLocked = document.pointerLockElement === canvas;
+      this.mouseStick.turn = 0;
+      this.mouseStick.pitch = 0;
+      if (!this.pointerLocked) this.controls.shooting = false;
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!this.pointerLocked) return;
+      const k = GAME_CONFIG.MOUSE_SENSITIVITY;
+      this.mouseStick.turn = Math.max(-1, Math.min(1, this.mouseStick.turn - e.movementX * k));
+      this.mouseStick.pitch = Math.max(-1, Math.min(1, this.mouseStick.pitch - e.movementY * k));
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (this.pointerLocked && e.button === 0) this.controls.shooting = true;
+    });
+    document.addEventListener('mouseup', (e) => {
+      if (e.button === 0 && this.pointerLocked) this.controls.shooting = false;
+    });
+
+    // Chat stays collapsed to its last lines until you press Enter
+    chatInput.addEventListener('focus', () => this.instruments?.setChatCollapsed(false));
+    chatInput.addEventListener('blur', () => this.instruments?.setChatCollapsed(true));
+    if (this.instruments) this.instruments.setChatCollapsed(true);
 
     usernameInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') startButton.click();
@@ -406,7 +466,10 @@ class Game {
     document.getElementById('tutorial-close').addEventListener('click', () => this.closeTutorial());
 
     const endButton = document.getElementById('end-restart');
-    if (endButton) endButton.addEventListener('click', () => window.location.reload());
+    if (endButton) endButton.addEventListener('click', () => {
+      try { localStorage.setItem('dvf.autoStart', '1'); } catch (e) { /* ignore */ }
+      window.location.reload();
+    });
 
     chatInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
@@ -1890,8 +1953,8 @@ class Game {
       const state = this.windmillStates[config.id];
       let color = '#888';
       let symbol = '\u25CB';
-      if (state && state.team === 'red') { color = '#ff4444'; symbol = '\u25CF'; }
-      else if (state && state.team === 'blue') { color = '#4444ff'; symbol = '\u25CF'; }
+      if (state && state.team === 'red') { color = '#ff5555'; symbol = '\u25CF'; }
+      else if (state && state.team === 'blue') { color = '#77aaff'; symbol = '\u25CF'; }
       html += `<span style="color:${color}; margin: 0 3px;" title="${config.name}">${symbol}</span>`;
     }
     el.innerHTML = html;
@@ -2061,6 +2124,7 @@ class Game {
       if (this.takeoffTimer > GAME_CONFIG.TAKEOFF_CLIMB_DURATION) {
         this.takeoffPhase = null;
         this.controlsEnabled = true;
+        this.onAirborne();
         ship.rotation.x = 0;
         this.pitchAngle = 0;
         ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
@@ -2091,6 +2155,7 @@ class Game {
 
     this.takeoffPhase = null;
     this.controlsEnabled = true;
+    this.onAirborne();
     ship.rotation.x = 0;
     this.pitchAngle = 0;
     ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
@@ -2317,10 +2382,23 @@ class Game {
         this.createTrail(data.player.id);
         this.playerHealth = 100;
 
+        if (data.gameState.rules) this.rules = { ...this.rules, ...data.gameState.rules };
+
+        // Late join: say so, and explain how points are scored
+        const total = this.rules.matchDuration || 300000;
+        if (typeof data.gameState.timeRemaining === 'number' && data.gameState.timeRemaining < total - 20000) {
+          const rem = Math.max(0, data.gameState.timeRemaining);
+          const m = Math.floor(rem / 60000), sec = Math.floor((rem % 60000) / 1000);
+          this.instruments.toast('⏱️', 'Match in progress', `${m}:${sec.toString().padStart(2, '0')} left — jump in!`);
+        }
+        setTimeout(() => this.instruments.toast('🏆', 'How to score',
+          `Hold windmills: +1 every ${this.rules.millTickSeconds}s each · Shoot down a plane: +${this.rules.killScore}`), 4000);
+
         // First run: park on the runway and show the tutorial; takeoff
         // starts when it's dismissed. Repeat visits take off immediately.
         if (!localStorage.getItem('tutorialSeen')) {
           localStorage.setItem('tutorialSeen', 'true');
+          this.firstFlight = true;
           ship.position.set(0, 1, GAME_CONFIG.RUNWAY_LENGTH / 2 - 10);
           ship.rotation.set(0, 0, 0);
           this.shipRotation = 0;
@@ -2452,6 +2530,15 @@ class Game {
         }
 
         if (data.targetId === this.localPlayer?.id) {
+          const attackerShip = this.players.get(data.attackerId);
+          const me = this.players.get(this.localPlayer.id);
+          if (attackerShip && me) {
+            const dx = attackerShip.position.x - me.position.x;
+            const dz = attackerShip.position.z - me.position.z;
+            const bearing = Math.atan2(dx, -dz) * 180 / Math.PI;
+            const heading = -this.shipRotation * 180 / Math.PI;
+            this.instruments.showDamageDirection(bearing - heading);
+          }
           this.playerHealth = typeof data.targetHealth === 'number'
             ? data.targetHealth
             : Math.max(0, this.playerHealth - data.damage);
@@ -2910,8 +2997,6 @@ class Game {
 
     const killsEl = document.getElementById('kills');
     const deathsEl = document.getElementById('deaths');
-    const playerListEl = document.getElementById('player-list');
-
     if (killsEl) killsEl.textContent = this.localPlayer.kills || 0;
     if (deathsEl) deathsEl.textContent = this.localPlayer.deaths || 0;
 
@@ -2928,16 +3013,27 @@ class Game {
       blueEl.classList.toggle('mine', this.localPlayer.team === 'blue');
     }
 
-    if (playerListEl && this.gameState.players) {
-      playerListEl.innerHTML = this.gameState.players.map(p => {
-        const color = this.getPlayerColor(p.id);
-        const hex = '#' + color.toString(16).padStart(6, '0');
-        const teamColor = p.team === 'red' ? '#ff5555' : '#5599ff';
-        const isYou = p.id === this.localPlayer.id ? ' (You)' : '';
-        const name = this.sanitizeInput(p.username || 'Pilot');
-        return `<div style="color:${hex}; margin: 2px 0;"><span style="color:${teamColor}">&#9679;</span> &#9992; ${name}${isYou} - K:${p.kills || 0} D:${p.deaths || 0}</div>`;
-      }).join('');
-    }
+    if (this.scoreboardOpen) this.renderScoreboard();
+  }
+
+  renderScoreboard() {
+    if (!this.instruments || !this.gameState?.players) return;
+    const rows = this.gameState.players.map(p => ({
+      name: p.username || 'Pilot',
+      team: p.team || 'red',
+      kills: p.kills || 0,
+      deaths: p.deaths || 0,
+      isBot: !!p.isBot,
+      me: p.id === this.localPlayer?.id,
+    }));
+    this.instruments.setScoreboard(true, rows);
+  }
+
+  setScoreboardOpen(open) {
+    if (this.scoreboardOpen === open) return;
+    this.scoreboardOpen = open;
+    if (open) this.renderScoreboard();
+    else this.instruments?.setScoreboard(false);
   }
 
   showGameEnd() {
@@ -2986,6 +3082,7 @@ class Game {
 
   onKeyDown(event) {
     const chatInput = document.getElementById('chat-input');
+    if (this.audio && this.audio.ctx.state === 'suspended') this.audio.ctx.resume();
 
     // If chat input is focused, only handle Escape to blur
     if (document.activeElement === chatInput) {
@@ -3021,8 +3118,9 @@ class Game {
       return;
     }
 
-    // Focus chat input on Enter
+    // Focus chat input on Enter (expand it first — a collapsed input can't take focus)
     if (event.key === 'Enter' && chatInput) {
+      this.instruments?.setChatCollapsed(false);
       chatInput.focus();
       event.preventDefault();
       return;
@@ -3041,6 +3139,9 @@ class Game {
       case 'm': this.toggleMute(); break;
       case 'p': if (this.localPlayer) this.togglePhotoMode(); break;
       case 'c': this.captureRequested = true; break;
+      case 'h': this.toggleControlsPanel(); break;
+      case 'x': this.skipOnboarding(); break;
+      case 'tab': this.setScoreboardOpen(true); event.preventDefault(); break;
       case 'escape': this.instruments.toggleSettings(true); event.preventDefault(); break;
     }
   }
@@ -3058,6 +3159,7 @@ class Game {
       case 'arrowdown': this.controls.pitchDown = false; event.preventDefault(); break;
       case 'shift': this.controls.boost = false; break;
       case ' ': this.controls.shooting = false; event.preventDefault(); break;
+      case 'tab': this.setScoreboardOpen(false); event.preventDefault(); break;
     }
   }
 
@@ -3067,9 +3169,20 @@ class Game {
 
   updatePlayer(delta) {
     if (!this.localPlayer || !this.players.has(this.localPlayer.id)) return;
+    if (this.crashed && !this.dead) {
+      this.updateCrashRecovery(delta);
+      return;
+    }
     if (this.crashed || this.dead || !this.controlsEnabled) return;
 
     const ship = this.players.get(this.localPlayer.id);
+
+    // Virtual mouse stick re-centres on its own
+    const decay = Math.exp(-GAME_CONFIG.MOUSE_STICK_DECAY * delta);
+    this.mouseStick.turn *= decay;
+    this.mouseStick.pitch *= decay;
+    const mouseTurn = this.pointerLocked ? this.mouseStick.turn : 0;
+    const mousePitch = this.pointerLocked ? this.mouseStick.pitch : 0;
 
     if (typeof this.localPlayer.energy !== 'number') this.localPlayer.energy = 100;
 
@@ -3102,7 +3215,7 @@ class Game {
     if (altEl) altEl.textContent = `${Math.round(ship.position.y * 3)}m`;
 
     // Banked turning (A/D): turn rate eases toward the input
-    const turnInput = (this.controls.left ? 1 : 0) - (this.controls.right ? 1 : 0);
+    const turnInput = Math.max(-1, Math.min(1, (this.controls.left ? 1 : 0) - (this.controls.right ? 1 : 0) + mouseTurn));
     const targetTurnRate = turnInput * GAME_CONFIG.TURN_RATE;
     const turnSmooth = Math.min(1, GAME_CONFIG.TURN_SMOOTHING * delta);
     this.rotationVelocity += (targetTurnRate - this.rotationVelocity) * turnSmooth;
@@ -3111,7 +3224,7 @@ class Game {
 
     // Climb & dive (↑/↓): pitch eases toward input; vertical speed scales
     // with airspeed so boosting dives feel fast
-    const pitchInput = (this.controls.pitchUp ? 1 : 0) - (this.controls.pitchDown ? 1 : 0);
+    const pitchInput = Math.max(-1, Math.min(1, (this.controls.pitchUp ? 1 : 0) - (this.controls.pitchDown ? 1 : 0) + mousePitch));
     const targetPitch = pitchInput * GAME_CONFIG.MAX_PITCH;
     this.pitchAngle += (targetPitch - this.pitchAngle) * Math.min(1, GAME_CONFIG.PITCH_SMOOTHING * delta);
     ship.rotation.x = -this.pitchAngle; // negative x = nose up
@@ -3193,6 +3306,17 @@ class Game {
 
     this.checkCollisions(ship);
     this.updateFlightInstruments(ship, speed, delta);
+    this.updateOnboarding(ship, delta, speed);
+    this.updateWaypoint(ship);
+
+    // The key legend retires itself once you've had time to read it
+    if (this.controlsPanelTimer > 0) {
+      this.controlsPanelTimer -= delta;
+      if (this.controlsPanelTimer <= 0 && !this.controlsPanelHidden) {
+        this.controlsPanelHidden = true;
+        this.instruments.setControlsPanel(false);
+      }
+    }
 
     const camBehind = 14;
     const camUp = 8;
@@ -3498,11 +3622,213 @@ class Game {
       this.crashed = false;
       if (this.dead) return; // fatal crash — the server respawn takes over
       if (overlay) overlay.style.display = 'none';
-      // Resume well above every obstacle, with brief collision immunity
-      ship.position.y = GAME_CONFIG.RESPAWN_ALTITUDE;
       this.pitchAngle = 0;
       this.crashGrace = GAME_CONFIG.CRASH_GRACE;
     }, GAME_CONFIG.CRASH_DURATION);
+  }
+
+  /**
+   * After a crash the plane keeps flying, slowly, while it climbs out to a
+   * safe altitude — no teleport, so you keep your bearings
+   */
+  updateCrashRecovery(delta) {
+    const ship = this.players.get(this.localPlayer.id);
+    if (!ship) return;
+    const speed = GAME_CONFIG.MOVEMENT_SPEED * 0.45;
+    ship.position.x -= Math.sin(this.shipRotation) * speed * delta;
+    ship.position.z -= Math.cos(this.shipRotation) * speed * delta;
+    const targetY = Math.max(ship.position.y, GAME_CONFIG.RESPAWN_ALTITUDE);
+    ship.position.y += (targetY - ship.position.y) * Math.min(1, delta * 2.5);
+    ship.rotation.x += (-0.25 - ship.rotation.x) * Math.min(1, delta * 4);
+    ship.rotation.z *= Math.exp(-3 * delta);
+    this.updateTrail(this.localPlayer.id, ship.position);
+    this.updateChunks(ship.position.x, ship.position.z);
+
+    const camBehind = 14, camUp = 8;
+    this.camera.position.x = ship.position.x + Math.sin(this.shipRotation) * camBehind;
+    this.camera.position.y = ship.position.y + camUp;
+    this.camera.position.z = ship.position.z + Math.cos(this.shipRotation) * camBehind;
+    this.camera.lookAt(ship.position);
+    if (this.shakeTime > 0) {
+      this.shakeTime = Math.max(0, this.shakeTime - delta);
+      const sh = this.shakeMag * (this.shakeTime / this.shakeDur);
+      this.camera.position.x += (Math.random() - 0.5) * sh * 2;
+      this.camera.position.y += (Math.random() - 0.5) * sh * 2;
+    }
+  }
+
+  // =========================================================================
+  // ONBOARDING, WAYPOINT, NAME TAGS
+  // =========================================================================
+
+  /** Called the moment the player gets control after takeoff */
+  onAirborne() {
+    this.controlsPanelTimer = GAME_CONFIG.CONTROLS_PANEL_SECONDS;
+    if (this.firstFlight && !this.onboarding) this.startOnboarding();
+    else if (this.instruments?.settings.mouse !== false && !this.pointerLocked) {
+      this.instruments.toast('🖱️', 'Click the world to steer with the mouse', 'A / D and ↑ / ↓ work too');
+    }
+  }
+
+  startOnboarding() {
+    const key = (k) => `<span class="key">${k}</span>`;
+    this.onboarding = {
+      index: 0,
+      progress: 0,
+      doneTimer: 0,
+      steps: [
+        { label: 'Step 1 of 5 · Steer',
+          html: `Steer with ${key('A')} / ${key('D')} — or click the world and use the mouse`,
+          check: (g) => Math.abs(g.rotationVelocity) > 0.8, need: 0.8 },
+        { label: 'Step 2 of 5 · Altitude',
+          html: `Climb with ${key('↑')} and dive with ${key('↓')} — fly OVER buildings`,
+          check: (g) => Math.abs(g.pitchAngle) > 0.18, need: 0.6 },
+        { label: 'Step 3 of 5 · Boost',
+          html: `Hold ${key('Shift')} to boost (it drains energy)`,
+          check: (g) => g.controls.boost && g.localPlayer.energy > 0, need: 0.5 },
+        { label: 'Step 4 of 5 · Guns',
+          html: `${key('Space')} or ${key('LMB')} to shoot — bots ignore you until you do`,
+          check: (g) => g.animationTime - g.lastFireTime < 0.3, need: 0.2 },
+        { label: 'Step 5 of 5 · Objective',
+          html: 'Follow the yellow marker and circle the windmill to capture it',
+          check: (g) => g.nearAnyWindmill(), need: 1.2 },
+      ],
+    };
+    this.showOnboardingStep();
+  }
+
+  showOnboardingStep() {
+    const ob = this.onboarding;
+    if (!ob || !this.instruments) return;
+    const step = ob.steps[ob.index];
+    if (step) this.instruments.setHint(step.html, step.label, true);
+  }
+
+  updateOnboarding(ship, delta) {
+    const ob = this.onboarding;
+    if (!ob) return;
+    if (ob.index >= ob.steps.length) {
+      ob.doneTimer -= delta;
+      if (ob.doneTimer <= 0) {
+        this.instruments.setHint(null);
+        this.onboarding = null;
+      }
+      return;
+    }
+    const step = ob.steps[ob.index];
+    if (step.check(this)) ob.progress += delta;
+    if (ob.progress >= step.need) {
+      ob.progress = 0;
+      ob.index++;
+      this.playSound('pickup');
+      if (ob.index >= ob.steps.length) {
+        ob.doneTimer = 7;
+        this.instruments.setHint(
+          `You're ready! Hold windmills for points, +${this.rules.killScore} per shoot-down. Good hunting.`, 'Flight school complete');
+      } else {
+        this.showOnboardingStep();
+      }
+    }
+  }
+
+  skipOnboarding() {
+    if (!this.onboarding) return;
+    this.onboarding = null;
+    this.instruments.setHint(null);
+    this.instruments.toast('🎓', 'Tutorial skipped', 'Follow the yellow marker to a windmill');
+  }
+
+  nearAnyWindmill() {
+    const ship = this.localPlayer ? this.players.get(this.localPlayer.id) : null;
+    if (!ship) return false;
+    for (const mill of CAPTURE_WINDMILLS) {
+      const dx = ship.position.x - mill.x, dz = ship.position.z - mill.z;
+      if (dx * dx + dz * dz < GAME_CONFIG.CAPTURE_RADIUS * GAME_CONFIG.CAPTURE_RADIUS) return true;
+    }
+    return false;
+  }
+
+  toggleControlsPanel() {
+    this.controlsPanelHidden = !this.controlsPanelHidden;
+    this.controlsPanelTimer = 0;
+    this.instruments.setControlsPanel(!this.controlsPanelHidden);
+  }
+
+  /** Picks the windmill worth flying to and projects a marker onto the screen */
+  updateWaypoint(ship) {
+    if (!this.instruments) return;
+    const myTeam = this.localPlayer?.team;
+    let best = null, bestScore = Infinity;
+    for (const mill of CAPTURE_WINDMILLS) {
+      const state = this.windmillStates[mill.id];
+      if (state?.team === myTeam) continue;
+      const dx = mill.x - ship.position.x, dz = mill.z - ship.position.z;
+      let score = Math.sqrt(dx * dx + dz * dz);
+      if (state?.contestingTeam === myTeam && state.progress > 0) score *= 0.4; // finish what we started
+      if (score < bestScore) { bestScore = score; best = { mill, state, dist: Math.sqrt(dx * dx + dz * dz) }; }
+    }
+    if (!best) {
+      this.instruments.updateWaypoint({ visible: false });
+      return;
+    }
+    const v = this._wpVec || (this._wpVec = new THREE.Vector3());
+    v.set(best.mill.x, 26, best.mill.z).project(this.camera);
+    const w = window.innerWidth, h = window.innerHeight;
+    const behind = v.z > 1;
+    let x = (v.x * 0.5 + 0.5) * w;
+    let y = (-v.y * 0.5 + 0.5) * h;
+    if (behind) { x = w - x; y = h - y; }
+    // Keep the marker clear of the HUD: controls panel (left), radar
+    // (right), compass stack (top), hint + attitude cluster (bottom)
+    const inset = { left: 240, right: 200, top: 150, bottom: 230 };
+    const onScreen = !behind && x > inset.left && x < w - inset.right && y > inset.top && y < h - inset.bottom;
+    let angle = 0;
+    if (!onScreen) {
+      const cx = w / 2, cy = h / 2;
+      const dx = (behind ? -1 : 1) * (x - cx), dy = (behind ? -1 : 1) * (y - cy);
+      const ang = Math.atan2(dy, dx);
+      // Intersect the ray from the centre with the inset rectangle
+      const halfW = Math.min(cx - inset.left, w - inset.right - cx);
+      const halfH = Math.min(cy - inset.top, h - inset.bottom - cy);
+      const tx = Math.abs(Math.cos(ang)) > 1e-4 ? halfW / Math.abs(Math.cos(ang)) : Infinity;
+      const ty = Math.abs(Math.sin(ang)) > 1e-4 ? halfH / Math.abs(Math.sin(ang)) : Infinity;
+      const t = Math.min(tx, ty);
+      x = cx + Math.cos(ang) * t;
+      y = cy + Math.sin(ang) * t;
+      angle = ang + Math.PI / 2;
+    }
+    const color = best.state?.team === 'red' ? '#ff6b6b' : best.state?.team === 'blue' ? '#7fb2ff' : '#FFD23F';
+    this.instruments.updateWaypoint({
+      visible: true, x, y, onScreen, angle,
+      label: `${best.mill.name.toUpperCase()} MILL · ${Math.round(best.dist * 3)} m`,
+      color,
+    });
+  }
+
+  /** Floating name / distance / BOT tags over nearby planes */
+  updateNameTags() {
+    if (!this.instruments || !this.localPlayer) return;
+    const me = this.players.get(this.localPlayer.id);
+    if (!me || this.photoMode) { this.instruments.updateTags([]); return; }
+    const info = {};
+    if (this.gameState?.players) for (const p of this.gameState.players) info[p.id] = p;
+    const v = this._tagVec || (this._tagVec = new THREE.Vector3());
+    const w = window.innerWidth, h = window.innerHeight;
+    const list = [];
+    for (const [id, ship] of this.players) {
+      if (id === this.localPlayer.id || !ship.visible) continue;
+      const dist = ship.position.distanceTo(me.position);
+      if (dist > 520) continue;
+      v.set(ship.position.x, ship.position.y + 3.5, ship.position.z).project(this.camera);
+      if (v.z > 1 || v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) continue;
+      const p = info[id];
+      list.push({
+        id, x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h,
+        name: p?.username || 'Pilot', dist: dist * 3,
+        team: p?.team || 'red', isBot: !!p?.isBot, sameTeam: p?.team === this.localPlayer.team,
+      });
+    }
+    this.instruments.updateTags(list);
   }
 
   animate() {
@@ -3579,6 +3905,7 @@ class Game {
       }
     });
 
+    this.updateNameTags();
     this.updateEnvironment(delta);
 
     if (this.postfx) this.postfx.render();

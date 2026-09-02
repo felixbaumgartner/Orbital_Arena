@@ -13,6 +13,7 @@ A multiplayer flight-combat game over an endless, living Dutch landscape: tulip 
 - Cockpit HUD: compass tape with objective bearings, artificial horizon, terrain warning, radar
 - Capture-the-windmill objective mode, tulip power-ups, barrel rolls
 - Photo mode with screenshot capture, landmark discovery toasts, in-game chat
+- Guided first flight: in-air coaching steps, objective waypoint marker, bots hold fire for your first minute
 
 ## Getting Started
 
@@ -29,13 +30,16 @@ A multiplayer flight-combat game over an endless, living Dutch landscape: tulip 
 
 ## Controls
 
+- Mouse: click the world to grab the pointer, then steer by moving the mouse (left button shoots, Esc releases)
 - A / D: Bank left and right
 - ↑ / ↓: Climb and dive
 - W / S: Throttle up and down
 - Shift: Boost (drains energy)
 - Space: Shoot
 - R: Barrel roll
-- Esc: Settings (graphics quality, bloom, time of day, FPS counter)
+- Tab (hold): Scoreboard
+- H: Show or hide the key legend
+- Esc: Settings (graphics quality, bloom, time of day, mouse steering, simple HUD, FPS)
 - P: Photo mode (cinematic orbit, HUD hidden)
 - C: Save a screenshot
 - M: Mute

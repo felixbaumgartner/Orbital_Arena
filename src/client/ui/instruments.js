@@ -1,7 +1,7 @@
 // Cockpit-style HUD widgets: compass tape, artificial horizon, terrain
 // warning, toasts, environment readout, settings panel, photo mode.
 
-const DEFAULT_SETTINGS = { quality: 'high', bloom: true, fps: false, time: 'auto' };
+const DEFAULT_SETTINGS = { quality: 'high', bloom: true, fps: false, time: 'auto', mouse: true, simpleHud: false };
 const STORAGE_KEY = 'dvf.settings.v1';
 
 export class Instruments {
@@ -24,9 +24,17 @@ export class Instruments {
     this.envWind = document.getElementById('env-wind');
     this.boostVignette = document.getElementById('boost-vignette');
     this.damageVignette = document.getElementById('damage-vignette');
+    this.hint = document.getElementById('hint');
+    this.waypoint = document.getElementById('waypoint');
+    this.damageDir = document.getElementById('damage-dir');
+    this.tags = document.getElementById('tags');
+    this.tagPool = new Map();
+    this.scoreboard = document.getElementById('scoreboard');
+    this.damageDirTimer = null;
 
     this.bindSettingsPanel();
     this.applyFpsVisibility();
+    this.applySimpleHud();
   }
 
   // --- Settings ---------------------------------------------------------------
@@ -50,19 +58,26 @@ export class Instruments {
     const bloom = document.getElementById('set-bloom');
     const fps = document.getElementById('set-fps');
     const time = document.getElementById('set-time');
+    const mouse = document.getElementById('set-mouse');
+    const simple = document.getElementById('set-simple');
     const close = document.getElementById('settings-close');
 
     if (quality) quality.value = this.settings.quality;
     if (bloom) bloom.checked = this.settings.bloom;
     if (fps) fps.checked = this.settings.fps;
     if (time) time.value = this.settings.time;
+    if (mouse) mouse.checked = this.settings.mouse !== false;
+    if (simple) simple.checked = !!this.settings.simpleHud;
 
     const change = (key, value) => {
       this.settings[key] = value;
       this.saveSettings();
       this.applyFpsVisibility();
+      this.applySimpleHud();
       this.onSettingsChange(key, value, this.settings);
     };
+    if (mouse) mouse.addEventListener('change', () => change('mouse', mouse.checked));
+    if (simple) simple.addEventListener('change', () => change('simpleHud', simple.checked));
     if (quality) quality.addEventListener('change', () => change('quality', quality.value));
     if (bloom) bloom.addEventListener('change', () => change('bloom', bloom.checked));
     if (fps) fps.addEventListener('change', () => change('fps', fps.checked));
@@ -85,6 +100,153 @@ export class Instruments {
 
   applyFpsVisibility() {
     if (this.fpsEl) this.fpsEl.style.display = this.settings.fps ? 'block' : 'none';
+  }
+
+  applySimpleHud() {
+    document.body.classList.toggle('simple', !!this.settings.simpleHud);
+  }
+
+  // --- Coaching hint --------------------------------------------------------------
+
+  /** html is built from trusted constants only; null hides the prompt */
+  setHint(html, stepLabel = '', skippable = false) {
+    if (!this.hint) return;
+    if (!html) {
+      this.hint.style.display = 'none';
+      this.hint.dataset.current = '';
+      return;
+    }
+    const full = (stepLabel ? `<span class="hint-step">${stepLabel}</span>` : '') + html +
+      (skippable ? '<span class="hint-skip">X to skip the tutorial</span>' : '');
+    if (this.hint.dataset.current === full) return;
+    this.hint.dataset.current = full;
+    this.hint.innerHTML = full;
+    this.hint.style.display = 'block';
+    // restart the entrance animation
+    this.hint.style.animation = 'none';
+    void this.hint.offsetWidth;
+    this.hint.style.animation = '';
+  }
+
+  // --- Objective waypoint --------------------------------------------------------------
+
+  /** { visible, x, y, onScreen, angle (rad, for the off-screen arrow), label, color } */
+  updateWaypoint(wp) {
+    const el = this.waypoint;
+    if (!el) return;
+    if (!wp || !wp.visible) {
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = 'block';
+    el.style.left = `${wp.x}px`;
+    el.style.top = `${wp.y}px`;
+    el.style.color = wp.color;
+    el.classList.toggle('offscreen', !wp.onScreen);
+    const arrow = el.querySelector('.wp-arrow');
+    if (arrow) arrow.style.transform = `rotate(${wp.angle}rad)`;
+    const label = el.querySelector('.wp-label');
+    if (label && label.textContent !== wp.label) label.textContent = wp.label;
+  }
+
+  // --- Damage direction --------------------------------------------------------------------
+
+  /** relDeg: bearing of the attacker relative to our nose, clockwise */
+  showDamageDirection(relDeg) {
+    const el = this.damageDir;
+    if (!el) return;
+    el.style.transform = `rotate(${relDeg}deg)`;
+    el.classList.add('show');
+    clearTimeout(this.damageDirTimer);
+    this.damageDirTimer = setTimeout(() => el.classList.remove('show'), 350);
+  }
+
+  // --- Plane name tags ----------------------------------------------------------------------
+
+  /** list: [{ id, x, y, name, dist, team, isBot, sameTeam }] — screen-space */
+  updateTags(list) {
+    if (!this.tags) return;
+    const seen = new Set();
+    for (const t of list) {
+      seen.add(t.id);
+      let el = this.tagPool.get(t.id);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'tag';
+        const name = document.createElement('span');
+        name.className = 'tag-name';
+        const bot = document.createElement('span');
+        bot.className = 'tag-bot';
+        bot.textContent = 'BOT';
+        const dist = document.createElement('span');
+        dist.className = 'tag-dist';
+        el.appendChild(name);
+        el.appendChild(bot);
+        el.appendChild(dist);
+        this.tags.appendChild(el);
+        this.tagPool.set(t.id, el);
+      }
+      el.className = `tag ${t.team || ''}${t.sameTeam ? ' mine-team' : ''}`;
+      el.style.left = `${t.x}px`;
+      el.style.top = `${t.y}px`;
+      const nameEl = el.firstChild;
+      if (nameEl.textContent !== t.name) nameEl.textContent = t.name;
+      el.children[1].style.display = t.isBot ? 'inline' : 'none';
+      el.children[2].textContent = `${Math.round(t.dist)} m`;
+    }
+    for (const [id, el] of this.tagPool) {
+      if (!seen.has(id)) {
+        el.remove();
+        this.tagPool.delete(id);
+      }
+    }
+  }
+
+  // --- Scoreboard -----------------------------------------------------------------------------
+
+  /** rows: [{ name, team, kills, deaths, isBot, me }] */
+  setScoreboard(visible, rows = []) {
+    if (!this.scoreboard) return;
+    this.scoreboard.style.display = visible ? 'block' : 'none';
+    if (!visible) return;
+    const body = document.getElementById('scoreboard-body');
+    if (!body) return;
+    body.textContent = '';
+    const sorted = rows.slice().sort((a, b) => (a.team > b.team ? 1 : a.team < b.team ? -1 : b.kills - a.kills));
+    for (const r of sorted) {
+      const tr = document.createElement('tr');
+      tr.className = `${r.team}${r.me ? ' me' : ''}`;
+      const name = document.createElement('td');
+      name.textContent = r.name + (r.me ? ' (you)' : '');
+      if (r.isBot) {
+        const chip = document.createElement('span');
+        chip.className = 'bot-chip';
+        chip.textContent = 'BOT';
+        name.appendChild(chip);
+      }
+      const team = document.createElement('td');
+      team.textContent = r.team.toUpperCase();
+      const k = document.createElement('td');
+      k.className = 'num';
+      k.textContent = r.kills;
+      const d = document.createElement('td');
+      d.className = 'num';
+      d.textContent = r.deaths;
+      tr.append(name, team, k, d);
+      body.appendChild(tr);
+    }
+  }
+
+  setChatCollapsed(collapsed) {
+    const chat = document.getElementById('chat');
+    if (chat) chat.classList.toggle('collapsed', collapsed);
+  }
+
+  setControlsPanel(visible) {
+    const panel = document.getElementById('controls-panel');
+    const chip = document.getElementById('controls-hint');
+    if (panel) panel.style.display = visible ? 'block' : 'none';
+    if (chip) chip.style.display = visible ? 'none' : 'block';
   }
 
   // --- Per-frame readouts --------------------------------------------------------
@@ -157,7 +319,7 @@ export class Instruments {
       }
     }
 
-    // Objective / contact markers
+    // Objective / contact markers (windmills carry a name + distance label)
     for (const m of markers) {
       const rel = Math.max(-span / 2, Math.min(span / 2, m.rel));
       const x = w / 2 + rel * pxPerDeg;
@@ -171,6 +333,10 @@ export class Instruments {
       ctx.lineTo(x + s, 4 + s * 1.6);
       ctx.closePath();
       ctx.fill();
+      if (m.label && !clamped) {
+        ctx.font = '600 9px "Rajdhani", "Segoe UI", sans-serif';
+        ctx.fillText(m.label, x, 4 + s * 1.6 + 9);
+      }
       ctx.globalAlpha = 1;
     }
     ctx.restore();

@@ -1833,18 +1833,24 @@ class Game {
       bladesGroup.position.set(0, 25, -4.5);
       group.add(bladesGroup);
 
-      // Capture ring on ground
-      const ringGeo = new THREE.RingGeometry(
-        GAME_CONFIG.CAPTURE_RING_RADIUS - 0.5,
-        GAME_CONFIG.CAPTURE_RING_RADIUS, 32
-      );
+      // Capture zone drawn at its true radius: a ground ring plus a faint
+      // wall, so "fly inside the circle" is something you can actually see
+      const R = GAME_CONFIG.CAPTURE_RADIUS;
+      const ringGeo = new THREE.RingGeometry(R - 1.6, R, 72);
       const ringMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff, transparent: true, opacity: 0.4, side: THREE.DoubleSide,
+        color: 0xffffff, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false,
       });
       const ring = new THREE.Mesh(ringGeo, ringMat);
       ring.rotation.x = -Math.PI / 2;
       ring.position.y = 0.6;
       group.add(ring);
+
+      const wallMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false,
+      });
+      const wall = new THREE.Mesh(new THREE.CylinderGeometry(R, R, 58, 56, 1, true), wallMat);
+      wall.position.y = 29;
+      group.add(wall);
 
       // Beacon light on top
       const beaconGeo = new THREE.SphereGeometry(1, 8, 8);
@@ -1858,7 +1864,7 @@ class Game {
 
       this.scene.add(group);
       this.captureWindmills.set(config.id, {
-        config, group, ring, ringMat, beacon, beaconMat,
+        config, group, ring, ringMat, wall, wallMat, beacon, beaconMat,
         bladesGroup, team: null, progress: 0,
       });
     }
@@ -1912,8 +1918,11 @@ class Game {
         }
       }
 
-      // Animate ring scale pulse
-      const ringPulse = 1 + Math.sin(this.animationTime * 2) * 0.05;
+      // Wall follows the ring colour; brightens while you're inside it
+      mill.wallMat.color.copy(mill.ringMat.color);
+      const inside = ship && Math.hypot(ship.position.x - mill.config.x, ship.position.z - mill.config.z) <= GAME_CONFIG.CAPTURE_RADIUS;
+      mill.wallMat.opacity = inside ? 0.14 : 0.06;
+      const ringPulse = 1 + Math.sin(this.animationTime * 2) * 0.012;
       mill.ring.scale.setScalar(ringPulse);
     }
 
@@ -1924,7 +1933,13 @@ class Game {
 
     if (nearestMill && captureUI) {
       captureUI.style.display = 'block';
-      if (captureLabel) captureLabel.textContent = nearestMill.config.name;
+      if (captureLabel) {
+        const st = this.windmillStates[nearestMill.config.id];
+        const mine = st?.team === this.localPlayer?.team;
+        captureLabel.textContent = mine
+          ? `Holding ${nearestMill.config.name} mill · stay inside to defend`
+          : `Capturing ${nearestMill.config.name} mill · stay inside the circle`;
+      }
       const serverState = this.windmillStates[nearestMill.config.id];
       const prog = serverState ? (serverState.progress || 0) : 0;
       if (captureFill) {
@@ -2307,6 +2322,7 @@ class Game {
       y: sp,
       z: -Math.cos(this.shipRotation) * cp,
     };
+    this.applyAimAssist(ship, dir);
 
     const projectile = this.createProjectile();
     const spawnDist = 8;
@@ -2545,7 +2561,7 @@ class Game {
           this.setHealthBar(this.playerHealth);
           this.playSound(data.killed ? 'explosion' : 'hit');
           this.shake(data.killed ? 1.2 : 0.35, data.killed ? 0.8 : 0.3);
-          if (data.killed) this.handleLocalDeath();
+          if (data.killed) this.handleLocalDeath(this.nameOf(data.attackerId));
         }
 
         // Keep scoreboard stats in sync
@@ -2583,6 +2599,9 @@ class Game {
         }
         if (data.playerId === this.localPlayer?.id) {
           this.dead = false;
+          clearInterval(this.respawnTicker);
+          const sub = document.getElementById('crash-sub');
+          if (sub) sub.textContent = '';
           this.playerHealth = data.health;
           this.setHealthBar(data.health);
           this.updateEnergyBar(data.energy);
@@ -2942,9 +2961,14 @@ class Game {
   showTeamBanner(team) {
     const el = document.getElementById('team-banner');
     if (!el || !team) return;
-    el.textContent = `YOU'RE ON THE ${team.toUpperCase()} TEAM`;
+    const enemy = team === 'red' ? 'blue' : 'red';
+    el.textContent = '';
+    el.appendChild(document.createTextNode(`YOU'RE ON THE ${team.toUpperCase()} TEAM`));
+    const sub = document.createElement('small');
+    sub.textContent = `Capture windmills · Shoot down ${enemy} planes`;
+    el.appendChild(sub);
     el.className = `show ${team}`;
-    setTimeout(() => { el.className = ''; }, 3500);
+    setTimeout(() => { el.className = ''; }, 4500);
   }
 
   displayChatMessage(username, message) {
@@ -2964,14 +2988,21 @@ class Game {
     healthFill.style.width = `${Math.max(0, Math.min(100, health))}%`;
   }
 
-  handleLocalDeath() {
+  handleLocalDeath(attackerName) {
     this.dead = true;
     const overlay = document.getElementById('crash-overlay');
+    const sub = document.getElementById('crash-sub');
     if (overlay) {
       const text = overlay.querySelector('.crash-text');
-      if (text) text.textContent = 'SHOT DOWN!';
+      if (text) text.textContent = attackerName ? `SHOT DOWN BY ${attackerName.toUpperCase()}` : 'SHOT DOWN!';
       overlay.style.display = 'flex';
     }
+    // Respawn countdown (server respawns after RESPAWN_DELAY = 3s)
+    clearInterval(this.respawnTicker);
+    let left = 3;
+    const tick = () => { if (sub) sub.textContent = `Respawning in ${left}…`; };
+    tick();
+    this.respawnTicker = setInterval(() => { left = Math.max(1, left - 1); tick(); }, 1000);
   }
 
   updateSpeedBar(speed) {
@@ -3012,6 +3043,8 @@ class Game {
       blueEl.textContent = `${scores.blue} BLUE`;
       blueEl.classList.toggle('mine', this.localPlayer.team === 'blue');
     }
+    const myTeamEl = document.getElementById('my-team');
+    if (myTeamEl) myTeamEl.textContent = (this.localPlayer.team || '').toUpperCase();
 
     if (this.scoreboardOpen) this.renderScoreboard();
   }
@@ -3224,7 +3257,8 @@ class Game {
 
     // Climb & dive (↑/↓): pitch eases toward input; vertical speed scales
     // with airspeed so boosting dives feel fast
-    const pitchInput = Math.max(-1, Math.min(1, (this.controls.pitchUp ? 1 : 0) - (this.controls.pitchDown ? 1 : 0) + mousePitch));
+    let pitchInput = Math.max(-1, Math.min(1, (this.controls.pitchUp ? 1 : 0) - (this.controls.pitchDown ? 1 : 0) + mousePitch));
+    if (this.terrainWarn && this.instruments?.settings.assist !== false) pitchInput = 1; // auto pull-up
     const targetPitch = pitchInput * GAME_CONFIG.MAX_PITCH;
     this.pitchAngle += (targetPitch - this.pitchAngle) * Math.min(1, GAME_CONFIG.PITCH_SMOOTHING * delta);
     ship.rotation.x = -this.pitchAngle; // negative x = nose up
@@ -3411,6 +3445,7 @@ class Game {
       }
     }
     ins.setPullUp(warn);
+    this.terrainWarn = warn;
     if (warn) {
       this.pullUpBeep -= delta;
       if (this.pullUpBeep <= 0) { this.pullUpBeep = 0.45; this.playSound('warning'); }
@@ -3604,6 +3639,8 @@ class Game {
     if (overlay) {
       const text = overlay.querySelector('.crash-text');
       if (text) text.textContent = 'CRASHED!';
+      const sub = document.getElementById('crash-sub');
+      if (sub) sub.textContent = '-20 health · climbing out, fly over obstacles';
       overlay.style.display = 'flex';
     }
 
@@ -3768,8 +3805,13 @@ class Game {
       if (score < bestScore) { bestScore = score; best = { mill, state, dist: Math.sqrt(dx * dx + dz * dz) }; }
     }
     if (!best) {
-      this.instruments.updateWaypoint({ visible: false });
-      return;
+      // Everything is ours: point at the nearest mill to defend it
+      for (const mill of CAPTURE_WINDMILLS) {
+        const dx = mill.x - ship.position.x, dz = mill.z - ship.position.z;
+        const d = Math.sqrt(dx * dx + dz * dz);
+        if (d < bestScore) { bestScore = d; best = { mill, state: this.windmillStates[mill.id], dist: d, defend: true }; }
+      }
+      if (!best) { this.instruments.updateWaypoint({ visible: false }); return; }
     }
     const v = this._wpVec || (this._wpVec = new THREE.Vector3());
     v.set(best.mill.x, 26, best.mill.z).project(this.camera);
@@ -3800,9 +3842,40 @@ class Game {
     const color = best.state?.team === 'red' ? '#ff6b6b' : best.state?.team === 'blue' ? '#7fb2ff' : '#FFD23F';
     this.instruments.updateWaypoint({
       visible: true, x, y, onScreen, angle,
-      label: `${best.mill.name.toUpperCase()} MILL · ${Math.round(best.dist * 3)} m`,
+      label: `${best.defend ? 'DEFEND' : best.state?.team ? 'RETAKE' : 'CAPTURE'} · ${best.mill.name.toUpperCase()} MILL · ${Math.round(best.dist * 3)} m`,
       color,
     });
+  }
+
+  /**
+   * Gentle aim assist: if an enemy sits within a 7° cone of the nose and
+   * inside gun range, the shot is steered onto them (with a little lead).
+   */
+  applyAimAssist(ship, dir) {
+    if (this.instruments?.settings.assist === false || !this.gameState?.players) return;
+    const myTeam = this.localPlayer?.team;
+    const teamOf = {};
+    for (const p of this.gameState.players) teamOf[p.id] = p.team;
+    const cone = Math.cos(7 * Math.PI / 180);
+    let best = null, bestDot = cone;
+    const to = this._aimVec || (this._aimVec = new THREE.Vector3());
+    for (const [id, other] of this.players) {
+      if (id === this.localPlayer.id || !other.visible || teamOf[id] === myTeam) continue;
+      to.subVectors(other.position, ship.position);
+      const dist = to.length();
+      if (dist > 220 || dist < 6) continue;
+      // Lead the target by its recent movement
+      const np = other.userData.netPos;
+      if (np) {
+        const t = dist / GAME_CONFIG.PROJECTILE_SPEED;
+        to.x += (np.x - other.position.x) * t * 2;
+        to.z += (np.z - other.position.z) * t * 2;
+      }
+      to.normalize();
+      const d = to.x * dir.x + to.y * dir.y + to.z * dir.z;
+      if (d > bestDot) { bestDot = d; best = to.clone(); }
+    }
+    if (best) { dir.x = best.x; dir.y = best.y; dir.z = best.z; }
   }
 
   /** Floating name / distance / BOT tags over nearby planes */

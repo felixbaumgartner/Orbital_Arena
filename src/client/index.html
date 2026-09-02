@@ -253,7 +253,7 @@
         /* Compass tape */
         #compass {
             position: fixed;
-            top: 3.7rem;
+            top: 4.5rem;
             left: 50%;
             transform: translateX(-50%);
             width: 440px;
@@ -357,7 +357,7 @@
         /* Toasts */
         #toasts {
             position: fixed;
-            top: 9.6rem;
+            top: 13rem;
             left: 50%;
             transform: translateX(-50%);
             display: flex;
@@ -649,7 +649,7 @@
         /* Environment readout: clock, weather, wind */
         #weather-indicator {
             position: fixed;
-            top: 6.8rem;
+            top: 7.6rem;
             left: 50%;
             transform: translateX(-50%);
             padding: 0.25rem 1rem;
@@ -689,15 +689,16 @@
         /* Capture progress bar */
         #capture-progress {
             position: fixed;
-            bottom: 14rem;
+            top: 10.2rem;
             left: 50%;
             transform: translateX(-50%);
-            width: 200px;
+            width: 340px;
             display: none;
             text-align: center;
         }
 
         #capture-label {
+            white-space: nowrap;
             font-size: 0.8rem;
             color: #fff;
             margin-bottom: 4px;
@@ -735,6 +736,16 @@
             align-items: center;
             z-index: 1000;
             pointer-events: none;
+        }
+
+        #crash-overlay { flex-direction: column; }
+
+        #crash-overlay .crash-sub {
+            margin-top: 0.6rem;
+            font-size: 1.1rem;
+            letter-spacing: 0.15em;
+            color: #fff;
+            text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
         }
 
         #crash-overlay .crash-text {
@@ -803,6 +814,24 @@
         }
 
         #score-row { display: flex; gap: 0.4rem; align-items: center; }
+
+        .score-caption {
+            font-size: 0.62rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: #cfd8dc;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+        }
+
+        .score-caption #my-team { color: var(--accent); }
+
+        .dots-label {
+            font-size: 0.6rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: #b0bec5;
+            margin-right: 0.5em;
+        }
 
         #score-kd {
             font-size: 0.85rem;
@@ -1150,6 +1179,15 @@
             transition: opacity 0.5s;
         }
 
+        #team-banner small {
+            display: block;
+            font-size: 1rem;
+            letter-spacing: 0.15rem;
+            color: #fff;
+            margin-top: 0.3rem;
+            font-weight: 600;
+        }
+
         #team-banner.show { opacity: 1; }
         #team-banner.red { color: var(--red); }
         #team-banner.blue { color: var(--blue); }
@@ -1268,12 +1306,13 @@
             <div id="fps" class="glass">-- FPS</div>
 
             <div id="score-bar">
+                <div class="score-caption">Team score &middot; you are <span id="my-team">RED</span></div>
                 <div id="score-row">
                     <span id="score-red" class="score-pill">RED 0</span>
                     <span id="score-kd" class="score-pill">K <span id="kills">0</span> &middot; D <span id="deaths">0</span></span>
                     <span id="score-blue" class="score-pill">0 BLUE</span>
                 </div>
-                <div id="mill-dots" title="Windmills"><span id="windmill-status"></span></div>
+                <div id="mill-dots" title="Windmills held"><span class="dots-label">Windmills held</span><span id="windmill-status"></span></div>
             </div>
 
             <canvas id="compass" width="440" height="44"></canvas>
@@ -1383,6 +1422,10 @@
                 <input type="checkbox" id="set-mouse" checked>
             </div>
             <div class="setting-row">
+                <label for="set-assist">Flight assists (auto pull-up, aim help)</label>
+                <input type="checkbox" id="set-assist" checked>
+            </div>
+            <div class="setting-row">
                 <label for="set-simple">Simple HUD</label>
                 <input type="checkbox" id="set-simple">
             </div>
@@ -1401,7 +1444,7 @@
             <h2>Welcome, pilot</h2>
             <p>Your plane always flies forward. Steer it with the <strong style="display:inline">mouse</strong> (click the world) or <strong style="display:inline">A / D</strong>, climb and dive with <strong style="display:inline">↑ / ↓</strong>.</p>
             <p><strong>Win</strong></p>
-            <p>Follow the yellow marker to a windmill and circle it to capture it. Owned windmills score every few seconds. Shooting down enemy planes scores too.</p>
+            <p>Follow the yellow marker to a windmill and fly inside its big glowing circle until the bar fills. Owned windmills score every few seconds. Shooting down enemy planes scores too.</p>
             <p><strong>Relax</strong></p>
             <p>Bots leave you alone for your first minute in the air, and we'll walk you through the controls once you're airborne.</p>
             <button id="tutorial-close">Take off! 🛫</button>
@@ -1431,6 +1474,7 @@
 
     <div id="crash-overlay">
         <div class="crash-text">CRASHED!</div>
+        <div class="crash-sub" id="crash-sub"></div>
     </div>
 
     <script src="bundle.js"></script>

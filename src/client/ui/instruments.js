@@ -1,7 +1,7 @@
 // Cockpit-style HUD widgets: compass tape, artificial horizon, terrain
 // warning, toasts, environment readout, settings panel, photo mode.
 
-const DEFAULT_SETTINGS = { quality: 'high', bloom: true, fps: false, time: 'auto', mouse: true, simpleHud: false };
+const DEFAULT_SETTINGS = { quality: 'high', bloom: true, fps: false, time: 'auto', mouse: true, simpleHud: false, assist: true };
 const STORAGE_KEY = 'dvf.settings.v1';
 
 export class Instruments {
@@ -60,6 +60,7 @@ export class Instruments {
     const time = document.getElementById('set-time');
     const mouse = document.getElementById('set-mouse');
     const simple = document.getElementById('set-simple');
+    const assist = document.getElementById('set-assist');
     const close = document.getElementById('settings-close');
 
     if (quality) quality.value = this.settings.quality;
@@ -68,6 +69,7 @@ export class Instruments {
     if (time) time.value = this.settings.time;
     if (mouse) mouse.checked = this.settings.mouse !== false;
     if (simple) simple.checked = !!this.settings.simpleHud;
+    if (assist) assist.checked = this.settings.assist !== false;
 
     const change = (key, value) => {
       this.settings[key] = value;
@@ -78,6 +80,7 @@ export class Instruments {
     };
     if (mouse) mouse.addEventListener('change', () => change('mouse', mouse.checked));
     if (simple) simple.addEventListener('change', () => change('simpleHud', simple.checked));
+    if (assist) assist.addEventListener('change', () => change('assist', assist.checked));
     if (quality) quality.addEventListener('change', () => change('quality', quality.value));
     if (bloom) bloom.addEventListener('change', () => change('bloom', bloom.checked));
     if (fps) fps.addEventListener('change', () => change('fps', fps.checked));

@@ -3387,9 +3387,21 @@ class Game {
     if (this.postfx) this.postfx.resize(window.innerWidth, window.innerHeight, this.renderer.getPixelRatio());
   }
 
+  /** True while a text field (name box, chat, settings) has focus */
+  isTyping() {
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+  }
+
   onKeyDown(event) {
     const chatInput = document.getElementById('chat-input');
     if (this.audio && this.audio.ctx.state === 'suspended') this.audio.ctx.resume();
+
+    // Typing somewhere other than chat (e.g. the pilot name box): let every
+    // key through untouched — flight keys must never eat letters
+    if (this.isTyping() && document.activeElement !== chatInput) return;
 
     // If chat input is focused, only handle Escape to blur
     if (document.activeElement === chatInput) {
@@ -3454,8 +3466,8 @@ class Game {
   }
 
   onKeyUp(event) {
-    // Ignore key ups when typing in chat
-    if (document.activeElement === document.getElementById('chat-input')) return;
+    // Ignore key ups while typing anywhere
+    if (this.isTyping()) return;
 
     switch (event.key.toLowerCase()) {
       case 'w': this.controls.throttleUp = false; break;

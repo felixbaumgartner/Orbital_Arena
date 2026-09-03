@@ -33,6 +33,10 @@ export class Instruments {
     this.damageDirTimer = null;
     this.lock = document.getElementById('lock');
     this.lead = document.getElementById('lead');
+    this.popups = document.getElementById('popups');
+    this.medalEl = document.getElementById('medal');
+    this.medalTimer = null;
+    this.countdownEl = document.getElementById('match-countdown');
 
     this.bindSettingsPanel();
     this.applyFpsVisibility();
@@ -152,6 +156,65 @@ export class Instruments {
     if (arrow) arrow.style.transform = `rotate(${wp.angle}rad)`;
     const label = el.querySelector('.wp-label');
     if (label && label.textContent !== wp.label) label.textContent = wp.label;
+  }
+
+  // --- Score popups, medals, countdown ------------------------------------------------------
+
+  /** "+100 KILL" floating beside the crosshair */
+  popup(points, label) {
+    if (!this.popups) return;
+    const el = document.createElement('div');
+    el.className = 'popup';
+    el.textContent = `+${points}`;
+    const l = document.createElement('span');
+    l.className = 'popup-label';
+    l.textContent = label;
+    el.appendChild(l);
+    // Stack recent popups so they don't overprint
+    const n = this.popups.children.length;
+    el.style.top = `${-n * 26}px`;
+    this.popups.appendChild(el);
+    setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 1300);
+  }
+
+  medal(icon, title, sub = '') {
+    const el = this.medalEl;
+    if (!el) return;
+    el.querySelector('.medal-icon').textContent = icon;
+    el.querySelector('.medal-title').textContent = title;
+    el.querySelector('.medal-sub').textContent = sub;
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
+    clearTimeout(this.medalTimer);
+    this.medalTimer = setTimeout(() => el.classList.remove('show'), 2600);
+  }
+
+  /** text null hides the overlay */
+  setCountdown(label, num) {
+    const el = this.countdownEl;
+    if (!el) return;
+    if (num === null || num === undefined) { el.classList.remove('show'); return; }
+    el.querySelector('.cd-label').textContent = label;
+    const n = el.querySelector('.cd-num');
+    if (n.textContent !== String(num)) {
+      n.textContent = num;
+      n.style.animation = 'none';
+      void n.offsetWidth;
+      n.style.animation = '';
+    }
+    el.classList.add('show');
+  }
+
+  setModeCaption(prefix, team) {
+    const cap = document.querySelector('.score-caption');
+    if (!cap) return;
+    cap.textContent = '';
+    cap.appendChild(document.createTextNode(`${prefix} · you are `));
+    const span = document.createElement('span');
+    span.id = 'my-team';
+    span.textContent = (team || '').toUpperCase();
+    cap.appendChild(span);
   }
 
   // --- Target lock + lead ------------------------------------------------------------------

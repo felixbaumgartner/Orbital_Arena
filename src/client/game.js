@@ -277,6 +277,22 @@ class Game {
     this.currentTarget = null;
     this.lockedId = null;
 
+    // Match mode, countdown, score popups, medals, streaks, XP
+    this.mode = 'domination';
+    this.pendingMode = 'domination';
+    this.countdownEndsAt = 0;
+    this.countdownLast = null;
+    this.sessionXp = 0;
+    this.medalsEarned = [];
+    this.killTimes = [];
+    this.lastKilledBy = null;
+    this.deathsSinceKill = 0;
+    this.matchKills = 0;
+    this.streak = 0;
+    this.radarSweepUntil = 0;
+    this.calloutsDone = new Set();
+    this.xpBanked = false;
+
     this.init();
 
     // Debug handle (also used by automated QA)
@@ -420,7 +436,12 @@ class Game {
         alert(`Username must be between ${GAME_CONFIG.USERNAME_MIN_LENGTH} and ${GAME_CONFIG.USERNAME_MAX_LENGTH} characters and contain only letters, numbers, and spaces.`);
         return;
       }
-      try { localStorage.setItem('dvf.name', username); } catch (e) { /* ignore */ }
+      const modeInput = document.querySelector('input[name="mode"]:checked');
+      this.pendingMode = modeInput && modeInput.value === 'tdm' ? 'tdm' : 'domination';
+      try {
+        localStorage.setItem('dvf.name', username);
+        localStorage.setItem('dvf.mode', this.pendingMode);
+      } catch (e) { /* ignore */ }
       this.connectToServer(username);
       loginScreen.style.display = 'none';
       hud.style.display = 'block';
@@ -431,6 +452,14 @@ class Game {
     try {
       const saved = localStorage.getItem('dvf.name');
       if (saved) usernameInput.value = saved;
+      const savedMode = localStorage.getItem('dvf.mode');
+      const modeRadio = document.querySelector(`input[name="mode"][value="${savedMode === 'tdm' ? 'tdm' : 'domination'}"]`);
+      if (modeRadio) modeRadio.checked = true;
+      const rankEl = document.getElementById('login-rank');
+      if (rankEl) {
+        const xp = this.totalXp();
+        rankEl.textContent = `Lv ${this.levelFor(xp)} · ${this.rankFor(xp)} · ${xp.toLocaleString()} XP`;
+      }
       if (localStorage.getItem('dvf.autoStart') === '1' && saved) {
         localStorage.removeItem('dvf.autoStart');
         setTimeout(start, 50);
@@ -2400,7 +2429,7 @@ class Game {
         console.log('Connected to server');
         this.isConnected = true;
         this.reconnectAttempts = 0;
-        this.socket.emit('joinGame', username);
+        this.socket.emit('joinGame', { username, mode: this.pendingMode });
       });
 
       this.socket.on('connect_error', (error) => {
@@ -2431,16 +2460,24 @@ class Game {
         this.playerHealth = 100;
 
         if (data.gameState.rules) this.rules = { ...this.rules, ...data.gameState.rules };
+        this.mode = data.gameState.mode === 'tdm' ? 'tdm' : 'domination';
+        this.applyModeHud();
+
+        // Pre-match countdown: the server's clock is still ahead of "now"
+        const total = data.gameState.rules?.matchDuration || 300000;
+        if (typeof data.gameState.timeRemaining === 'number' && data.gameState.timeRemaining > total) {
+          this.countdownEndsAt = performance.now() + (data.gameState.timeRemaining - total);
+        }
 
         // Late join: say so, and explain how points are scored
-        const total = this.rules.matchDuration || 300000;
         if (typeof data.gameState.timeRemaining === 'number' && data.gameState.timeRemaining < total - 20000) {
           const rem = Math.max(0, data.gameState.timeRemaining);
           const m = Math.floor(rem / 60000), sec = Math.floor((rem % 60000) / 1000);
           this.instruments.toast('⏱️', 'Match in progress', `${m}:${sec.toString().padStart(2, '0')} left — jump in!`);
         }
-        setTimeout(() => this.instruments.toast('🏆', 'How to score',
-          `Hold windmills: +1 every ${this.rules.millTickSeconds}s each · Shoot down a plane: +${this.rules.killScore}`), 4000);
+        setTimeout(() => this.instruments.toast('🏆', 'How to score', this.mode === 'tdm'
+          ? `Team Deathmatch · every shoot-down counts · first to ${this.rules.tdmTarget || 30} wins`
+          : `Hold windmills: +1 every ${this.rules.millTickSeconds}s each · Shoot down a plane: +${this.rules.killScore}`), 4000);
 
         // First run: park on the runway and show the tutorial; takeoff
         // starts when it's dismissed. Repeat visits take off immediately.
@@ -2456,7 +2493,8 @@ class Game {
           const tutorial = document.getElementById('tutorial');
           if (tutorial) tutorial.style.display = 'block';
         } else {
-          this.startTakeoff(ship);
+          // Repeat visits skip the runway: straight into the fight
+          this.spawnAirborne(ship, data.player.position);
         }
 
         this.showTeamBanner(this.localPlayer.team);
@@ -2575,6 +2613,7 @@ class Game {
 
         // Kill: explosion at the victim, ship hidden until respawn
         const victimShip = this.players.get(data.targetId);
+        if (data.airstrike && victimShip) this.spawnExplosion(victimShip.position);
         if (data.killed && victimShip) {
           this.spawnExplosion(victimShip.position);
           victimShip.visible = false;
@@ -2584,7 +2623,16 @@ class Game {
         if (data.attackerId === this.localPlayer?.id) {
           this.showHitmarker(data.killed);
           this.playSound(data.killed ? 'kill' : 'hitconfirm');
-          if (data.killed) this.showKillBanner(this.nameOf(data.targetId));
+          if (data.killed) {
+            this.showKillBanner(this.nameOf(data.targetId));
+            this.onMyKill(data);
+          }
+        }
+        if (data.killed) this.matchKills++;
+        if (data.killed && data.targetId === this.localPlayer?.id) {
+          this.lastKilledBy = data.attackerId;
+          this.deathsSinceKill++;
+          this.streak = 0;
         }
 
         if (data.killed) {
@@ -2648,6 +2696,8 @@ class Game {
         }
         if (data.playerId === this.localPlayer?.id) {
           this.dead = false;
+          this.streak = 0;
+          if (ship) this.faceNearestEnemy(ship);
           clearInterval(this.respawnTicker);
           const sub = document.getElementById('crash-sub');
           if (sub) sub.textContent = '';
@@ -2689,8 +2739,41 @@ class Game {
       this.socket.on('windmillUpdate', (data) => {
         if (data && data.windmills) {
           for (const mill of data.windmills) {
+            const prev = this.windmillStates[mill.id];
+            const myTeam = this.localPlayer?.team;
+            if (prev && prev.team !== mill.team && mill.team === myTeam) {
+              const ship = this.players.get(this.localPlayer.id);
+              const inside = ship && Math.hypot(ship.position.x - mill.x, ship.position.z - mill.z) <= GAME_CONFIG.CAPTURE_RADIUS;
+              if (inside) this.addPopup(150, 'CAPTURE');
+              else this.addPopup(50, 'TEAM CAPTURE');
+            }
             this.windmillStates[mill.id] = mill;
           }
+        }
+      });
+
+      // Killstreak rewards
+      this.socket.on('streak', (d) => {
+        if (!d) return;
+        const mine = d.playerId === this.localPlayer?.id;
+        if (mine) {
+          this.streak = d.streak;
+          if (d.reward === 'radar') {
+            this.radarSweepUntil = this.animationTime + 20;
+            this.awardMedal('📡', 'RADAR SWEEP', 'Every enemy revealed for 20s', 0);
+          } else if (d.reward === 'wingman') {
+            this.awardMedal('🛩️', 'WINGMAN INBOUND', 'An escort guards you for 45s', 0);
+          } else if (d.reward === 'airstrike') {
+            this.awardMedal('💥', 'AIRSTRIKE', 'Every enemy nearby takes heavy damage', 0);
+            const ship = this.players.get(this.localPlayer.id);
+            if (ship) this.shake(1.0, 0.6);
+          } else {
+            this.awardMedal('🔥', `${d.streak} KILL STREAK`, 'Keep it going', 0);
+          }
+          this.playSound('streak');
+        } else if (d.reward) {
+          this.instruments.toast('🔥', `${d.username} is on a ${d.streak} kill streak`,
+            d.reward === 'radar' ? 'Radar sweep' : d.reward === 'wingman' ? 'Wingman called in' : 'Airstrike!');
         }
       });
 
@@ -2813,6 +2896,39 @@ class Game {
         thud.start(t); thud.stop(t + 0.16);
         break;
       }
+      case 'medal':
+        // Quick bright arpeggio
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(659, t);
+        osc.frequency.setValueAtTime(880, t + 0.07);
+        osc.frequency.setValueAtTime(1319, t + 0.14);
+        gain.gain.setValueAtTime(0.14, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+        osc.start(t); osc.stop(t + 0.4);
+        break;
+      case 'streak':
+        // Rising power chord
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(220, t);
+        osc.frequency.exponentialRampToValueAtTime(660, t + 0.35);
+        gain.gain.setValueAtTime(0.12, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+        osc.start(t); osc.stop(t + 0.6);
+        break;
+      case 'tick':
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(1000, t);
+        gain.gain.setValueAtTime(0.08, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+        osc.start(t); osc.stop(t + 0.08);
+        break;
+      case 'go':
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(1500, t);
+        gain.gain.setValueAtTime(0.14, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+        osc.start(t); osc.stop(t + 0.4);
+        break;
       case 'lock':
         // Short two-note chirp when the bracket turns red
         osc.type = 'sine';
@@ -2938,10 +3054,24 @@ class Game {
     if (this.gameState?.players) {
       for (const pl of this.gameState.players) teamOf[pl.id] = pl.team;
     }
+    const sweep = this.radarSweepActive();
+    if (sweep) {
+      ctx.strokeStyle = 'rgba(80, 255, 140, 0.9)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(half, half, half - 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     for (const [id, otherShip] of this.players) {
       if (id === this.localPlayer?.id) continue;
       const p = project(otherShip.position.x, otherShip.position.z);
-      if (!p.inRange) continue;
+      if (!p.inRange) {
+        if (!sweep || teamOf[id] === myTeam) continue;
+        // Sweep: pin out-of-range enemies to the radar's edge
+        const ang = Math.atan2(p.y - half, p.x - half);
+        p.x = half + Math.cos(ang) * (half - 6);
+        p.y = half + Math.sin(ang) * (half - 6);
+      }
       ctx.fillStyle = teamOf[id] === myTeam ? '#44ff88' : '#ff4444';
       ctx.beginPath();
       ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
@@ -2995,6 +3125,40 @@ class Game {
       el.textContent = text;
       el.classList.toggle('low', remaining < 31000);
     }
+
+    // Match callouts
+    if (this.gameState && this.localPlayer) {
+      const s = this.gameState.scores || { red: 0, blue: 0 };
+      const my = s[this.localPlayer.team] || 0, their = s[this.localPlayer.team === 'red' ? 'blue' : 'red'] || 0;
+      const standing = my > their ? `You lead ${my}–${their}` : my < their ? `You trail ${my}–${their}` : `Tied ${my}–${their}`;
+      if (remaining < 150000 && remaining > 140000 && !this.calloutsDone.has('half')) {
+        this.calloutsDone.add('half');
+        this.instruments.toast('⏱️', 'Halfway', standing);
+      }
+      if (remaining < 30000 && remaining > 20000 && !this.calloutsDone.has('final')) {
+        this.calloutsDone.add('final');
+        this.instruments.toast('⏱️', 'Final 30 seconds!', standing);
+        this.playSound('warning');
+      }
+    }
+  }
+
+  /** Pre-match countdown overlay, driven from the server's start time */
+  updateCountdown() {
+    if (!this.countdownEndsAt) return;
+    const left = this.countdownEndsAt - performance.now();
+    if (left <= -1200) {
+      this.countdownEndsAt = 0;
+      this.countdownLast = null;
+      this.instruments.setCountdown(null);
+      return;
+    }
+    const n = left > 0 ? Math.ceil(left / 1000) : 'GO!';
+    if (n !== this.countdownLast) {
+      this.countdownLast = n;
+      this.instruments.setCountdown(n === 'GO!' ? 'FIGHT' : 'MATCH STARTS IN', n);
+      this.playSound(n === 'GO!' ? 'go' : 'tick');
+    }
   }
 
   showHitmarker(killed) {
@@ -3033,7 +3197,9 @@ class Game {
     el.textContent = '';
     el.appendChild(document.createTextNode(`YOU'RE ON THE ${team.toUpperCase()} TEAM`));
     const sub = document.createElement('small');
-    sub.textContent = `Capture windmills · Shoot down ${enemy} planes`;
+    sub.textContent = this.mode === 'tdm'
+      ? `Shoot down ${enemy} planes · first to ${this.rules.tdmTarget || 30} wins`
+      : `Capture windmills · Shoot down ${enemy} planes`;
     el.appendChild(sub);
     el.className = `show ${team}`;
     setTimeout(() => { el.className = ''; }, 4500);
@@ -3164,6 +3330,40 @@ class Game {
     if (statsEl && this.localPlayer) {
       statsEl.textContent =
         `You: ${this.localPlayer.kills || 0} kills / ${this.localPlayer.deaths || 0} deaths`;
+    }
+
+    const reasonEl = document.getElementById('end-reason');
+    if (reasonEl) {
+      const target = this.rules.tdmTarget || 30;
+      const winName = winner ? winner.toUpperCase() : '';
+      reasonEl.textContent = this.gameState.endReason === 'target'
+        ? `${winName} reached ${target} kills`
+        : this.mode === 'tdm' ? `Time's up · ${winner ? winName + ' had more kills' : 'kills level'}`
+        : `Time's up · ${winner ? winName + ' held the windmills longer' : 'nobody pulled ahead'}`;
+    }
+    const mvpEl = document.getElementById('end-mvp');
+    const mvp = this.gameState.mvp;
+    if (mvpEl) mvpEl.textContent = mvp
+      ? `Top pilot: ${mvp.username}${mvp.isBot ? ' (BOT)' : ''} · ${mvp.kills} kills / ${mvp.deaths} deaths` : '';
+
+    // XP and rank progress
+    const winBonus = winner === myTeam ? 200 : 50;
+    this.addPopup(winBonus, winner === myTeam ? 'VICTORY' : 'MATCH COMPLETE');
+    const before = this.totalXp();
+    this.bankXp();
+    const after = before + this.sessionXp;
+    const xpEl = document.getElementById('end-xp');
+    if (xpEl) {
+      const lvBefore = this.levelFor(before), lvAfter = this.levelFor(after);
+      xpEl.textContent = `+${this.sessionXp.toLocaleString()} XP · Lv ${lvAfter} ${this.rankFor(after)} (${after.toLocaleString()} XP)` +
+        (lvAfter > lvBefore ? ' · LEVEL UP!' : '');
+    }
+    const medalsEl = document.getElementById('end-medals');
+    if (medalsEl) {
+      const counts = {};
+      for (const m of this.medalsEarned) counts[m] = (counts[m] || 0) + 1;
+      const list = Object.entries(counts).map(([m, n]) => n > 1 ? `${m} ×${n}` : m);
+      medalsEl.textContent = list.length ? `Medals: ${list.join(' · ')}` : 'No medals this time — go get a Double Kill';
     }
 
     this.controlsEnabled = false;
@@ -3478,7 +3678,7 @@ class Game {
     if (this.gameState?.players) for (const pl of this.gameState.players) teamOf[pl.id] = pl.team;
     for (const [id, other] of this.players) {
       if (id === this.localPlayer.id || !other.visible) continue;
-      if (other.position.distanceTo(ship.position) > 700) continue;
+      if (other.position.distanceTo(ship.position) > (this.radarSweepActive() ? 4000 : 700)) continue;
       markers.push({
         rel: bearingTo(other.position.x, other.position.z), size: 4,
         color: teamOf[id] === myTeam ? '#44ff88' : '#ff4444',
@@ -3772,7 +3972,11 @@ class Game {
     this.controlsPanelTimer = GAME_CONFIG.CONTROLS_PANEL_SECONDS;
     if (this.firstFlight && !this.onboarding) this.startOnboarding();
     else if (this.instruments?.settings.mouse !== false && !this.pointerLocked) {
-      this.instruments.toast('🖱️', 'Click the world to steer with the mouse', 'A / D and ↑ / ↓ work too');
+      // Wait for the countdown and team banner to clear before more text
+      const delay = Math.max(0, this.countdownEndsAt - performance.now()) + 2500;
+      setTimeout(() => {
+        if (!this.pointerLocked) this.instruments.toast('🖱️', 'Click the world to steer with the mouse', 'A / D and ↑ / ↓ work too');
+      }, delay);
     }
   }
 
@@ -3864,6 +4068,7 @@ class Game {
   updateWaypoint(ship) {
     if (!this.instruments) return;
     const myTeam = this.localPlayer?.team;
+    if (this.mode === 'tdm') { this.updateHuntWaypoint(ship, myTeam); return; }
     let best = null, bestScore = Infinity;
     for (const mill of CAPTURE_WINDMILLS) {
       const state = this.windmillStates[mill.id];
@@ -4015,7 +4220,174 @@ class Game {
     dir.x = out.x; dir.y = out.y; dir.z = out.z;
   }
 
-  /** Floating name / distance / BOT tags over nearby planes */  /** Floating name / distance / BOT tags over nearby planes */
+  /** Floating name / distance / BOT tags over nearby planes */  /** Team Deathmatch: the marker leads to the nearest enemy plane */
+  updateHuntWaypoint(ship, myTeam) {
+    const info = {};
+    if (this.gameState?.players) for (const p of this.gameState.players) info[p.id] = p;
+    let best = null, bestDist = Infinity;
+    for (const [id, other] of this.players) {
+      if (id === this.localPlayer.id || !other.visible || info[id]?.team === myTeam) continue;
+      const d = other.position.distanceTo(ship.position);
+      if (d < bestDist) { bestDist = d; best = { other, name: info[id]?.username || 'Enemy' }; }
+    }
+    if (!best) { this.instruments.updateWaypoint({ visible: false }); return; }
+    const v = this._wpVec || (this._wpVec = new THREE.Vector3());
+    v.copy(best.other.position).project(this.camera);
+    const w = window.innerWidth, h = window.innerHeight;
+    const behind = v.z > 1;
+    let x = (v.x * 0.5 + 0.5) * w, y = (-v.y * 0.5 + 0.5) * h;
+    if (behind) { x = w - x; y = h - y; }
+    const inset = { left: 240, right: 200, top: 150, bottom: 230 };
+    const onScreen = !behind && x > inset.left && x < w - inset.right && y > inset.top && y < h - inset.bottom;
+    let angle = 0;
+    if (!onScreen) {
+      const cx = w / 2, cy = h / 2;
+      const ang = Math.atan2((behind ? -1 : 1) * (y - cy), (behind ? -1 : 1) * (x - cx));
+      const halfW = Math.min(cx - inset.left, w - inset.right - cx);
+      const halfH = Math.min(cy - inset.top, h - inset.bottom - cy);
+      const tx = Math.abs(Math.cos(ang)) > 1e-4 ? halfW / Math.abs(Math.cos(ang)) : Infinity;
+      const ty = Math.abs(Math.sin(ang)) > 1e-4 ? halfH / Math.abs(Math.sin(ang)) : Infinity;
+      const t = Math.min(tx, ty);
+      x = cx + Math.cos(ang) * t; y = cy + Math.sin(ang) * t; angle = ang + Math.PI / 2;
+    }
+    // Don't double up with the lock bracket when the enemy is already in view
+    this.instruments.updateWaypoint({
+      visible: !onScreen || bestDist > GAME_CONFIG.LOCK_RANGE, x, y, onScreen, angle,
+      label: `HUNT · ${best.name.toUpperCase()} · ${Math.round(bestDist * 3)} m`, color: '#ff6b6b',
+    });
+  }
+
+  /** Mode-specific HUD: TDM hides the windmill machinery */
+  applyModeHud() {
+    const tdm = this.mode === 'tdm';
+    const dots = document.getElementById('mill-dots');
+    if (dots) dots.style.display = tdm ? 'none' : '';
+    for (const [, mill] of this.captureWindmills) mill.group.visible = !tdm;
+    const target = this.rules.tdmTarget || 30;
+    this.instruments.setModeCaption(tdm ? `Team Deathmatch · first to ${target}` : 'Windmill Domination · team score', this.localPlayer?.team);
+  }
+
+  /** Spawn already flying, pointed at something worth doing */
+  spawnAirborne(ship, pos) {
+    ship.position.set(pos?.x || 0, GAME_CONFIG.FLIGHT_HEIGHT, pos?.z || 0);
+    ship.rotation.set(0, 0, 0);
+    this.pitchAngle = 0;
+    this.takeoffPhase = null;
+    const overlay = document.getElementById('takeoff-overlay');
+    if (overlay) overlay.style.display = 'none';
+    // Face the nearest objective (Domination) or the arena centre
+    let target = { x: 0, z: 0 };
+    if (this.mode !== 'tdm') {
+      let bestD = Infinity;
+      for (const mill of CAPTURE_WINDMILLS) {
+        const st = this.windmillStates[mill.id];
+        if (st?.team === this.localPlayer?.team) continue;
+        const d = Math.hypot(mill.x - ship.position.x, mill.z - ship.position.z);
+        if (d < bestD) { bestD = d; target = mill; }
+      }
+    }
+    this.shipRotation = Math.atan2(-(target.x - ship.position.x), -(target.z - ship.position.z));
+    ship.rotation.y = this.shipRotation;
+    this.controlsEnabled = true;
+    this.crashGrace = GAME_CONFIG.CRASH_GRACE;
+    this.camera.position.set(ship.position.x + Math.sin(this.shipRotation) * 14, ship.position.y + 8, ship.position.z + Math.cos(this.shipRotation) * 14);
+    this.camera.lookAt(ship.position);
+    this.onAirborne();
+  }
+
+  faceNearestEnemy(ship) {
+    const info = {};
+    if (this.gameState?.players) for (const p of this.gameState.players) info[p.id] = p;
+    let best = null, bestD = Infinity;
+    for (const [id, other] of this.players) {
+      if (id === this.localPlayer.id || !other.visible || info[id]?.team === this.localPlayer.team) continue;
+      const d = other.position.distanceTo(ship.position);
+      if (d < bestD) { bestD = d; best = other; }
+    }
+    if (!best) return;
+    this.shipRotation = Math.atan2(-(best.position.x - ship.position.x), -(best.position.z - ship.position.z));
+    ship.rotation.y = this.shipRotation;
+    this.pitchAngle = 0;
+  }
+
+  // =========================================================================
+  // SCORE POPUPS, MEDALS, XP
+  // =========================================================================
+
+  addPopup(points, label) {
+    this.sessionXp += points;
+    this.instruments.popup(points, label);
+  }
+
+  awardMedal(icon, title, sub, points) {
+    this.medalsEarned.push(title);
+    this.instruments.medal(icon, title, sub);
+    if (points) this.addPopup(points, title);
+    this.playSound('medal');
+  }
+
+  /** Called when one of my shots (or an airstrike) downs an enemy */
+  onMyKill(data) {
+    const now = this.animationTime;
+    this.streak++;
+    this.addPopup(100, 'KILL');
+    this.killTimes = this.killTimes.filter(t => now - t < 4).concat(now);
+    const burst = this.killTimes.length;
+    if (burst === 2) this.awardMedal('✌️', 'DOUBLE KILL', 'Two down in four seconds', 100);
+    else if (burst >= 3) this.awardMedal('🔱', 'TRIPLE KILL', 'Three down in four seconds', 200);
+    if (this.matchKills === 0) this.awardMedal('🩸', 'FIRST BLOOD', 'First kill of the match', 50);
+    if (data.targetId && data.targetId === this.lastKilledBy) {
+      this.awardMedal('😤', 'REVENGE', `Payback on ${this.nameOf(data.targetId)}`, 50);
+      this.lastKilledBy = null;
+    }
+    const me = this.players.get(this.localPlayer.id);
+    const victim = this.players.get(data.targetId);
+    if (me && victim && !data.airstrike && me.position.distanceTo(victim.position) > 170) {
+      this.awardMedal('🎯', 'LONG SHOT', `${Math.round(me.position.distanceTo(victim.position) * 3)} m`, 75);
+    }
+    if (this.deathsSinceKill >= 3) this.awardMedal('💪', 'COMEBACK', 'Back in the fight', 50);
+    this.deathsSinceKill = 0;
+    if (this.mode !== 'tdm' && me) {
+      for (const mill of CAPTURE_WINDMILLS) {
+        const st = this.windmillStates[mill.id];
+        if (st?.team === this.localPlayer.team && Math.hypot(me.position.x - mill.x, me.position.z - mill.z) <= GAME_CONFIG.CAPTURE_RADIUS) {
+          this.addPopup(50, 'DEFEND');
+          break;
+        }
+      }
+    }
+  }
+
+  totalXp() {
+    try { return parseInt(localStorage.getItem('dvf.xp') || '0', 10) || 0; } catch (e) { return 0; }
+  }
+
+  bankXp() {
+    if (this.xpBanked) return;
+    this.xpBanked = true;
+    try { localStorage.setItem('dvf.xp', String(this.totalXp() + this.sessionXp)); } catch (e) { /* ignore */ }
+  }
+
+  levelFor(xp) {
+    return Math.min(30, Math.floor(Math.sqrt(xp / 400)) + 1);
+  }
+
+  rankFor(xp) {
+    const lv = this.levelFor(xp);
+    if (lv >= 17) return 'Ace';
+    if (lv >= 14) return 'Commander';
+    if (lv >= 11) return 'Major';
+    if (lv >= 8) return 'Captain';
+    if (lv >= 5) return 'Lieutenant';
+    if (lv >= 3) return 'Pilot';
+    return 'Cadet';
+  }
+
+  radarSweepActive() {
+    return this.radarSweepUntil > this.animationTime;
+  }
+
+  /** Floating name / distance / BOT tags over nearby planes */
   updateNameTags() {
     if (!this.instruments || !this.localPlayer) return;
     const me = this.players.get(this.localPlayer.id);
@@ -4028,7 +4400,7 @@ class Game {
     for (const [id, ship] of this.players) {
       if (id === this.localPlayer.id || !ship.visible) continue;
       const dist = ship.position.distanceTo(me.position);
-      if (dist > 520) continue;
+      if (dist > (this.radarSweepActive() ? 4000 : 520)) continue;
       v.set(ship.position.x, ship.position.y + 3.5, ship.position.z).project(this.camera);
       if (v.z > 1 || v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) continue;
       const p = info[id];
@@ -4053,6 +4425,7 @@ class Game {
     this.updateCaptureWindmills(delta);
     this.updateAmbient(delta);
     this.updateTimer();
+    this.updateCountdown();
 
     // Takeoff sequence
     if (this.takeoffPhase) {

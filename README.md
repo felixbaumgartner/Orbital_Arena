@@ -14,6 +14,10 @@ A multiplayer flight-combat game over an endless, living Dutch landscape: tulip 
 - Capture-the-windmill objective mode, tulip power-ups, barrel rolls
 - Photo mode with screenshot capture, landmark discovery toasts, in-game chat
 - Guided first flight: in-air coaching steps, objective waypoint marker, bots hold fire for your first minute
+- Two modes: Windmill Domination and Team Deathmatch (first to 30), with a pre-match countdown, halfway and final-30 callouts, and a top-pilot end screen
+- Score popups and medals (Double Kill, Triple Kill, First Blood, Revenge, Long Shot, Comeback), XP with levels and ranks from Cadet to Ace
+- Killstreak rewards: radar sweep at 3, wingman escort at 5, airstrike at 7
+- Lead indicator, target lock bracket with health, magnetic aim assist and bright tracers
 
 ## Getting Started
 

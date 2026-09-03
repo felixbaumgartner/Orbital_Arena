@@ -2188,7 +2188,7 @@ class Game {
 
       const liftProgress = this.takeoffTimer / GAME_CONFIG.TAKEOFF_LIFTOFF_DURATION;
       ship.position.y = 1 + liftProgress * 10;
-      ship.rotation.x = -0.15; // Nose up
+      ship.rotation.x = 0.15; // Nose up
 
       if (takeoffText) takeoffText.textContent = 'LIFTOFF!';
 
@@ -2205,7 +2205,7 @@ class Game {
       const climbProgress = Math.min(1, this.takeoffTimer / GAME_CONFIG.TAKEOFF_CLIMB_DURATION);
       const currentY = 11 + climbProgress * (GAME_CONFIG.FLIGHT_HEIGHT - 11);
       ship.position.y = currentY;
-      ship.rotation.x = -0.15 * (1 - climbProgress); // Level out
+      ship.rotation.x = 0.15 * (1 - climbProgress); // Level out
 
       if (takeoffText) takeoffText.textContent = 'CLIMBING...';
 
@@ -2267,6 +2267,10 @@ class Game {
 
   createPlayerShip(color) {
     const planeGroup = new THREE.Group();
+    // Heading first, then pitch about the nose axis, then bank — the default
+    // XYZ order pitched about the WORLD x axis, which rolled the plane
+    // sideways whenever it wasn't flying due north
+    planeGroup.rotation.order = 'YXZ';
 
     const mainMat = new THREE.MeshStandardMaterial({
       color, metalness: 0.8, roughness: 0.15, side: THREE.DoubleSide,
@@ -3581,9 +3585,14 @@ class Game {
     // with airspeed so boosting dives feel fast
     let pitchInput = Math.max(-1, Math.min(1, (this.controls.pitchUp ? 1 : 0) - (this.controls.pitchDown ? 1 : 0) + mousePitch));
     if (this.terrainWarn && this.instruments?.settings.assist !== false) pitchInput = 1; // auto pull-up
-    const targetPitch = pitchInput * GAME_CONFIG.MAX_PITCH;
+    let targetPitch = pitchInput * GAME_CONFIG.MAX_PITCH;
+    // Soft floor and ceiling: the climb eases off instead of slamming into the limit
+    const headroom = GAME_CONFIG.MAX_ALTITUDE - ship.position.y;
+    const floorRoom = ship.position.y - GAME_CONFIG.MIN_ALTITUDE;
+    if (targetPitch > 0 && headroom < 12) targetPitch *= Math.max(0, headroom / 12);
+    if (targetPitch < 0 && floorRoom < 8) targetPitch *= Math.max(0, floorRoom / 8);
     this.pitchAngle += (targetPitch - this.pitchAngle) * Math.min(1, GAME_CONFIG.PITCH_SMOOTHING * delta);
-    ship.rotation.x = -this.pitchAngle; // negative x = nose up
+    ship.rotation.x = this.pitchAngle; // nose is at -Z, so +x pitches it up
 
     // Bank into the turn — roll proportional to the smoothed turn rate
     const targetBank = (this.rotationVelocity / GAME_CONFIG.TURN_RATE) * GAME_CONFIG.MAX_BANK_ANGLE;
@@ -3678,7 +3687,10 @@ class Game {
     const camBehind = 14;
     const camUp = 8;
     this.camera.position.x = ship.position.x + Math.sin(this.shipRotation) * camBehind;
-    this.camera.position.y = ship.position.y + camUp;
+    const camTargetY = ship.position.y + camUp;
+    if (this.camY === undefined || Math.abs(this.camY - camTargetY) > 40) this.camY = camTargetY;
+    this.camY += (camTargetY - this.camY) * Math.min(1, delta * 9);
+    this.camera.position.y = this.camY;
     this.camera.position.z = ship.position.z + Math.cos(this.shipRotation) * camBehind;
     this.camera.lookAt(ship.position);
 
@@ -4000,7 +4012,7 @@ class Game {
     ship.position.z -= Math.cos(this.shipRotation) * speed * delta;
     const targetY = Math.max(ship.position.y, GAME_CONFIG.RESPAWN_ALTITUDE);
     ship.position.y += (targetY - ship.position.y) * Math.min(1, delta * 2.5);
-    ship.rotation.x += (-0.25 - ship.rotation.x) * Math.min(1, delta * 4);
+    ship.rotation.x += (0.25 - ship.rotation.x) * Math.min(1, delta * 4);
     ship.rotation.z *= Math.exp(-3 * delta);
     this.updateTrail(this.localPlayer.id, ship.position);
     this.updateChunks(ship.position.x, ship.position.z);

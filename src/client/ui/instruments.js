@@ -49,11 +49,14 @@ export class Instruments {
   // --- Settings ---------------------------------------------------------------
 
   loadSettings() {
+    // Phones and tablets start on Low; the player can raise it in settings
+    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    const base = coarse ? { ...DEFAULT_SETTINGS, quality: 'low', simpleHud: true } : { ...DEFAULT_SETTINGS };
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+      if (raw) return { ...base, ...JSON.parse(raw) };
     } catch (e) { /* private mode etc. */ }
-    return { ...DEFAULT_SETTINGS };
+    return base;
   }
 
   saveSettings() {

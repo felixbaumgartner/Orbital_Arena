@@ -10,6 +10,7 @@ import {
 } from './scenery/props.js';
 import { PostFX } from './postfx.js';
 import { Instruments } from './ui/instruments.js';
+import { TouchControls } from './ui/touch.js';
 
 // Game constants
 const GAME_CONFIG = {
@@ -265,6 +266,10 @@ class Game {
     this.mouseStick = { turn: 0, pitch: 0 };
     this.pointerLocked = false;
 
+    // Touch (phones / tablets)
+    this.isTouch = TouchControls.isTouchDevice();
+    this.touch = null;
+
     // Onboarding, HUD state, match rules
     this.onboarding = null;
     this.controlsPanelTimer = 0;
@@ -432,6 +437,10 @@ class Game {
 
     const start = () => {
       this.initAudio(); // requires a user gesture (resumed later if not)
+      if (this.isTouch) {
+        try { document.documentElement.requestFullscreen?.(); } catch (e) { /* iOS: not available */ }
+        try { screen.orientation?.lock?.('landscape').catch(() => {}); } catch (e) { /* ignore */ }
+      }
       const username = this.sanitizeInput(usernameInput.value.trim());
       if (!this.isValidUsername(username)) {
         alert(`Username must be between ${GAME_CONFIG.USERNAME_MIN_LENGTH} and ${GAME_CONFIG.USERNAME_MAX_LENGTH} characters and contain only letters, numbers, and spaces.`);
@@ -467,9 +476,32 @@ class Game {
       }
     } catch (e) { /* ignore */ }
 
+    // Touch controls: thumbstick + hold buttons, shown once airborne
+    if (this.isTouch) {
+      document.body.classList.add('touch');
+      this.touch = new TouchControls({
+        onFire: (down) => { this.controls.shooting = down; },
+        onBoost: (down) => { this.controls.boost = down; },
+        onRoll: () => this.startBarrelRoll(),
+        onSettings: () => this.instruments.toggleSettings(),
+        onScores: () => this.setScoreboardOpen(!this.scoreboardOpen),
+      });
+      this.touch.show(false);
+      const rotate = document.getElementById('rotate-overlay');
+      const checkOrientation = () => {
+        if (!rotate || this.rotateDismissed) return;
+        rotate.classList.toggle('show', window.innerHeight > window.innerWidth);
+      };
+      window.addEventListener('resize', checkOrientation);
+      checkOrientation();
+      const dismiss = document.getElementById('rotate-dismiss');
+      if (dismiss) dismiss.addEventListener('click', () => { this.rotateDismissed = true; rotate.classList.remove('show'); });
+    }
+
     // Mouse steering: click the world to grab the pointer, Esc releases it
     const canvas = this.renderer.domElement;
     canvas.addEventListener('click', () => {
+      if (this.isTouch) return;
       if (!this.localPlayer || !this.controlsEnabled) return;
       if (this.instruments?.settings.mouse === false) return;
       if (document.pointerLockElement !== canvas) {
@@ -3500,8 +3532,12 @@ class Game {
     const decay = Math.exp(-GAME_CONFIG.MOUSE_STICK_DECAY * delta);
     this.mouseStick.turn *= decay;
     this.mouseStick.pitch *= decay;
-    const mouseTurn = this.pointerLocked ? this.mouseStick.turn : 0;
-    const mousePitch = this.pointerLocked ? this.mouseStick.pitch : 0;
+    let mouseTurn = this.pointerLocked ? this.mouseStick.turn : 0;
+    let mousePitch = this.pointerLocked ? this.mouseStick.pitch : 0;
+    if (this.touch && this.touch.active) {
+      mouseTurn -= this.touch.stick.x;   // push left = turn left
+      mousePitch -= this.touch.stick.y;  // push up = climb
+    }
 
     if (typeof this.localPlayer.energy !== 'number') this.localPlayer.energy = 100;
 
@@ -3802,6 +3838,7 @@ class Game {
   togglePhotoMode() {
     this.photoMode = !this.photoMode;
     this.instruments.setPhotoMode(this.photoMode);
+    if (this.touch) this.touch.show(!this.photoMode);
     if (this.photoMode) {
       this.photoAngle = this.shipRotation + Math.PI / 2;
       this.instruments.toast('📷', 'Photo mode', 'C to save a screenshot · P to exit');
@@ -3988,8 +4025,9 @@ class Game {
   /** Called the moment the player gets control after takeoff */
   onAirborne() {
     this.controlsPanelTimer = GAME_CONFIG.CONTROLS_PANEL_SECONDS;
+    if (this.touch) this.touch.show(true);
     if (this.firstFlight && !this.onboarding) this.startOnboarding();
-    else if (this.instruments?.settings.mouse !== false && !this.pointerLocked) {
+    else if (!this.isTouch && this.instruments?.settings.mouse !== false && !this.pointerLocked) {
       // Wait for the countdown and team banner to clear before more text
       const delay = Math.max(0, this.countdownEndsAt - performance.now()) + 2500;
       setTimeout(() => {
@@ -4000,6 +4038,20 @@ class Game {
 
   startOnboarding() {
     const key = (k) => `<span class="key">${k}</span>`;
+    if (this.isTouch) {
+      this.onboarding = {
+        index: 0, progress: 0, doneTimer: 0,
+        steps: [
+          { label: 'Step 1 of 5 · Steer', html: 'Drag anywhere on the left half to steer', check: (g) => Math.abs(g.rotationVelocity) > 0.8, need: 0.8 },
+          { label: 'Step 2 of 5 · Altitude', html: 'Push the stick up to climb, down to dive — fly OVER buildings', check: (g) => Math.abs(g.pitchAngle) > 0.18, need: 0.6 },
+          { label: 'Step 3 of 5 · Boost', html: 'Hold BOOST for speed (it drains energy)', check: (g) => g.controls.boost && g.localPlayer.energy > 0, need: 0.5 },
+          { label: 'Step 4 of 5 · Guns', html: 'Hold FIRE with an enemy in the red box', check: (g) => g.animationTime - g.lastFireTime < 0.3, need: 0.2 },
+          { label: 'Step 5 of 5 · Objective', html: 'Follow the yellow marker and fly inside the windmill circle', check: (g) => g.nearAnyWindmill(), need: 1.2 },
+        ],
+      };
+      this.showOnboardingStep();
+      return;
+    }
     this.onboarding = {
       index: 0,
       progress: 0,
@@ -4114,7 +4166,7 @@ class Game {
     if (behind) { x = w - x; y = h - y; }
     // Keep the marker clear of the HUD: controls panel (left), radar
     // (right), compass stack (top), hint + attitude cluster (bottom)
-    const inset = { left: 240, right: 330, top: 150, bottom: 230 };
+    const inset = this.hudInset();
     const onScreen = !behind && x > inset.left && x < w - inset.right && y > inset.top && y < h - inset.bottom;
     let angle = 0;
     if (!onScreen) {
@@ -4256,7 +4308,7 @@ class Game {
     const behind = v.z > 1;
     let x = (v.x * 0.5 + 0.5) * w, y = (-v.y * 0.5 + 0.5) * h;
     if (behind) { x = w - x; y = h - y; }
-    const inset = { left: 240, right: 330, top: 150, bottom: 230 };
+    const inset = this.hudInset();
     const onScreen = !behind && x > inset.left && x < w - inset.right && y > inset.top && y < h - inset.bottom;
     let angle = 0;
     if (!onScreen) {
@@ -4410,7 +4462,15 @@ class Game {
    * Projects a world point to the screen; if it is out of view (or behind
    * the camera) the point is pushed to the HUD-safe edge with an arrow angle.
    */
-  screenMarkerFor(pos, inset = { left: 240, right: 330, top: 150, bottom: 230 }) {
+  /** Screen rectangle that markers must stay inside (HUD lives outside it) */
+  hudInset(forEdgeMarkers = false) {
+    if (this.isTouch || window.innerHeight < 600) {
+      return forEdgeMarkers ? { left: 170, right: 225, top: 120, bottom: 125 } : { left: 170, right: 225, top: 110, bottom: 135 };
+    }
+    return forEdgeMarkers ? { left: 235, right: 330, top: 175, bottom: 235 } : { left: 240, right: 330, top: 150, bottom: 230 };
+  }
+
+  screenMarkerFor(pos, inset = this.hudInset()) {
     const v = this._smVec || (this._smVec = new THREE.Vector3());
     v.copy(pos).project(this.camera);
     const w = window.innerWidth, h = window.innerHeight;
@@ -4447,7 +4507,7 @@ class Game {
     const enemyRange = this.radarSweepActive() ? 5000 : 1200;
     const tmp = this._edgeVec || (this._edgeVec = new THREE.Vector3());
     // Keep clear of the score bar / compass (top), controls (left), radar (right), hint + attitude (bottom)
-    const EDGE_INSET = { left: 235, right: 330, top: 175, bottom: 235 };
+    const EDGE_INSET = this.hudInset(true);
 
     // Enemy planes out of view (in-view ones already carry a name tag)
     for (const [id, other] of this.players) {
@@ -4459,7 +4519,7 @@ class Game {
       const m = this.screenMarkerFor(other.position, EDGE_INSET);
       if (m.inView) continue;
       const dy = other.position.y - me.position.y;
-      list.push({ id: `e:${id}`, x: m.x, y: m.y, angle: m.angle, inView: false, cls: 'enemy',
+      list.push({ id: `e:${id}`, x: m.x, y: m.y, angle: m.angle, inView: false, cls: 'enemy', dist,
         label: `${p.username || 'Enemy'} ${Math.round(dist * 3)} m${dy > 12 ? ' ▲' : dy < -12 ? ' ▼' : ''}` });
     }
 
@@ -4473,11 +4533,11 @@ class Game {
         const m = this.screenMarkerFor(tmp, EDGE_INSET);
         const owner = st?.team === myTeam ? 'YOURS' : st?.team ? 'ENEMY' : 'FREE';
         const cls = st?.team === 'red' ? 'mill-red' : st?.team === 'blue' ? 'mill-blue' : 'mill-none';
-        list.push({ id: `m:${mill.id}`, x: m.x, y: m.y, angle: m.angle, inView: m.inView, cls,
+        list.push({ id: `m:${mill.id}`, x: m.x, y: m.y, angle: m.angle, inView: m.inView, cls, dist,
           label: `${mill.name.toUpperCase()} MILL · ${Math.round(dist * 3)} m`, owner });
       }
     }
-    this.instruments.updateEdgeMarkers(list);
+    this.instruments.updateEdgeMarkers(this.declutterMarkers(list));
   }
 
   /**
@@ -4538,6 +4598,30 @@ class Game {
       this.scene.add(p);
       this.smokeParticles.push(p);
     }
+  }
+
+  /**
+   * Keeps the edges readable: only the nearest few arrows of each kind,
+   * and any two that would overprint get nudged apart.
+   */
+  declutterMarkers(list) {
+    const maxEach = this.isTouch ? 2 : 3;
+    const byDist = (a, b) => (a.dist || 0) - (b.dist || 0);
+    const enemies = list.filter(m => m.cls === 'enemy' && !m.inView).sort(byDist).slice(0, maxEach);
+    const mills = list.filter(m => m.cls !== 'enemy' && !m.inView).sort(byDist).slice(0, maxEach);
+    const inView = list.filter(m => m.inView);
+    const edge = enemies.concat(mills).sort((a, b) => a.y - b.y || a.x - b.x);
+    const minGapX = 120, minGapY = 34;
+    for (let i = 1; i < edge.length; i++) {
+      for (let j = 0; j < i; j++) {
+        const a = edge[j], b = edge[i];
+        if (Math.abs(a.y - b.y) < minGapY && Math.abs(a.x - b.x) < minGapX) {
+          b.x = a.x + (b.x >= a.x ? minGapX : -minGapX);
+          b.x = Math.max(60, Math.min(window.innerWidth - 60, b.x));
+        }
+      }
+    }
+    return inView.concat(edge);
   }
 
   /** Floating name / distance / BOT tags over nearby planes */

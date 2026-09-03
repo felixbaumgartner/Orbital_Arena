@@ -18,6 +18,7 @@ A multiplayer flight-combat game over an endless, living Dutch landscape: tulip 
 - Score popups and medals (Double Kill, Triple Kill, First Blood, Revenge, Long Shot, Comeback), XP with levels and ranks from Cadet to Ace
 - Killstreak rewards: radar sweep at 3, wingman escort at 5, airstrike at 7
 - Lead indicator, target lock bracket with health, magnetic aim assist and bright tracers
+- Mobile web: floating thumbstick, FIRE / BOOST / ROLL buttons, compact landscape HUD, Low quality by default
 
 ## Getting Started
 
@@ -48,6 +49,7 @@ A multiplayer flight-combat game over an endless, living Dutch landscape: tulip 
 - C: Save a screenshot
 - M: Mute
 - Enter: Chat
+- Touch (phones/tablets): drag the left half of the screen to steer and climb/dive, hold FIRE and BOOST on the right, tap ROLL, SCORES and the gear
 
 ## Development
 

@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#0a1016">
     <title>Dutch Village Flight - June Skies</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -24,13 +27,23 @@
             box-sizing: border-box;
         }
 
+        html, body { height: 100%; }
+
         body {
             overflow: hidden;
             background: #000;
             color: #fff;
             font-family: var(--hud-font);
             letter-spacing: 0.02em;
+            overscroll-behavior: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: none;
         }
+
+        #game-container canvas { touch-action: none; }
+        input, textarea { -webkit-user-select: text; user-select: text; }
 
         #game-container {
             position: fixed;
@@ -643,6 +656,180 @@
 
         body.photo #notify-column > :not(#toasts) { display: none !important; }
         body.simple #notify-column #kill-feed { display: none !important; }
+
+        /* ---------- Touch controls ---------- */
+        #touch-ui { display: none; }
+
+        #stick-zone {
+            position: fixed;
+            left: 0;
+            bottom: 0;
+            width: 50%;
+            height: 62%;
+            pointer-events: auto;
+            touch-action: none;
+            z-index: 20;
+        }
+
+        #stick-zone .stick-hint {
+            position: absolute;
+            left: 50%;
+            bottom: 14px;
+            transform: translateX(-50%);
+            font-size: 0.6rem;
+            letter-spacing: 0.15em;
+            color: rgba(255, 255, 255, 0.45);
+            white-space: nowrap;
+            pointer-events: none;
+        }
+
+        #stick-base {
+            position: fixed;
+            width: 110px;
+            height: 110px;
+            margin: -55px 0 0 -55px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.35);
+            background: rgba(10, 16, 22, 0.35);
+            display: none;
+            pointer-events: none;
+        }
+
+        #stick-knob {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            background: rgba(255, 210, 63, 0.85);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+            transform: translate(-50%, -50%);
+        }
+
+        #touch-buttons {
+            position: fixed;
+            right: max(14px, env(safe-area-inset-right));
+            bottom: max(16px, env(safe-area-inset-bottom));
+            display: flex;
+            align-items: flex-end;
+            gap: 12px;
+            pointer-events: auto;
+            z-index: 20;
+        }
+
+        .tbtn {
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            background: rgba(10, 16, 22, 0.55);
+            color: #fff;
+            font-family: var(--hud-font);
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            border-radius: 50%;
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .tbtn.big { width: 96px; height: 96px; font-size: 1rem; border-color: rgba(255, 90, 90, 0.85); background: rgba(160, 30, 30, 0.45); }
+        .tbtn.small { width: 64px; height: 64px; font-size: 0.7rem; }
+        .tbtn.tiny { width: auto; height: 34px; padding: 0 0.8rem; border-radius: 17px; font-size: 0.7rem; }
+        .tbtn.down { background: rgba(255, 210, 63, 0.8); color: #000; border-color: #FFD23F; }
+        #btn-boost.down { background: rgba(0, 170, 255, 0.8); }
+
+        #touch-top {
+            position: fixed;
+            top: max(10px, env(safe-area-inset-top));
+            right: max(10px, env(safe-area-inset-right));
+            display: flex;
+            gap: 8px;
+            pointer-events: auto;
+            z-index: 20;
+        }
+
+        body.touch #touch-ui { display: block; }
+        body.touch #touch-ui.hidden { display: none; }
+
+        /* Rotate prompt */
+        #rotate-overlay {
+            position: fixed;
+            inset: 0;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 2rem;
+            background: rgba(6, 10, 14, 0.94);
+            z-index: 3000;
+            pointer-events: auto;
+        }
+
+        #rotate-overlay.show { display: flex; }
+        #rotate-overlay .rotate-icon { font-size: 3.5rem; transform: rotate(90deg); margin-bottom: 1rem; }
+        #rotate-overlay .rotate-title { font-size: 1.4rem; font-weight: 700; letter-spacing: 0.1em; }
+        #rotate-overlay .rotate-sub { color: #b0bec5; margin: 0.6rem 0 1.4rem; max-width: 320px; }
+        #rotate-dismiss {
+            padding: 0.7rem 1.6rem;
+            background: var(--green);
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-family: var(--hud-font);
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            font-size: 1rem;
+        }
+
+        /* ---------- Touch layout: strip the desktop-only chrome ---------- */
+        body.touch #controls-panel,
+        body.touch #controls-hint,
+        body.touch #chat,
+        body.touch #weather-indicator,
+        body.touch .crosshair,
+        body.touch #fps { display: none !important; }
+
+        body.touch .team-scores .sub { display: none; }
+        body.touch .desk-only { display: none; }
+        body.touch .team-scores { top: max(10px, env(safe-area-inset-top)); right: 9.2rem; padding: 0.3rem 0.6rem; font-size: 0.9rem; }
+        body.touch #radar { width: 110px; height: 110px; top: 3.4rem; right: max(10px, env(safe-area-inset-right)); }
+        body.touch #notify-column { top: 11rem; right: max(10px, env(safe-area-inset-right)); width: 210px; }
+        body.touch #notify-column #hint { font-size: 0.85rem; padding: 0.4rem 0.6rem; }
+        body.touch #notify-column .toast { min-width: 0; padding: 0.35rem 0.6rem; }
+        body.touch .toast-title { font-size: 0.85rem; }
+        body.touch #score-bar { top: max(6px, env(safe-area-inset-top)); font-size: 0.9rem; }
+        body.touch #score-bar .score-pill { padding: 0.1rem 0.6rem; }
+        body.touch .score-caption { font-size: 0.55rem; }
+        body.touch #compass { width: 300px; height: 40px; top: 3.6rem; }
+        body.touch #attitude-cluster { display: none; }
+        body.touch .bar-container { left: max(10px, env(safe-area-inset-left)); width: 150px; }
+        body.touch .speed-bar, body.touch .health-bar, body.touch .energy-bar { width: 140px; height: 10px; }
+        body.touch .bar-label { font-size: 0.65rem; }
+        body.touch .speed-container { bottom: auto; top: 6.2rem; }
+        body.touch .health-container { bottom: auto; top: 8.6rem; }
+        body.touch .energy-container { bottom: auto; top: 11rem; }
+        body.touch #capture-progress { top: 6.4rem; width: 240px; }
+        body.touch #pullup { font-size: 1.6rem; top: 30%; }
+        body.touch #popups { left: calc(50% + 30px); }
+        body.touch .popup { font-size: 0.95rem; }
+        body.touch #login-form { padding: 1.2rem 1.4rem; max-height: 92vh; overflow-y: auto; }
+        body.touch #login-form h1 { font-size: 1.6rem; }
+        body.touch #login-features { display: none; }
+        body.touch #login-hint { display: none; }
+        body.touch #mode-picker { grid-template-columns: 1fr 1fr; gap: 0.4rem; margin-bottom: 0.6rem; }
+        body.touch .mode-card { padding: 0.5rem 0.6rem; }
+        body.touch .mode-card .mode-sub { display: none; }
+        body.touch #tutorial { max-width: 92vw; max-height: 90vh; overflow-y: auto; padding: 1.2rem; }
+        body.touch #settings-panel, body.touch #scoreboard, body.touch #end-card { max-height: 92vh; overflow-y: auto; }
+        body.touch #end-card { padding: 1.4rem 1.6rem; }
+        body.touch #settings-panel { pointer-events: auto; }
+
+        @media (max-width: 900px), (max-height: 520px) {
+            html { font-size: 13px; }
+        }
 
         /* Photo mode */
         body.photo #hud,
@@ -1679,7 +1866,7 @@
             </div>
 
             <div class="bar-container energy-container">
-                <div class="bar-label">Energy (Shift to boost)</div>
+                <div class="bar-label">Energy <span class="desk-only">(Shift to boost)</span></div>
                 <div class="energy-bar">
                     <div class="energy-fill" style="width: 100%"></div>
                 </div>
@@ -1743,6 +1930,29 @@
             <div id="medal"><span class="medal-icon"></span><span class="medal-title"></span><span class="medal-sub"></span></div>
             <div id="toasts"></div>
             <div id="hint" class="glass"></div>
+        </div>
+
+        <div id="touch-ui">
+            <div id="stick-zone">
+                <div id="stick-base"><div id="stick-knob"></div></div>
+                <div class="stick-hint">DRAG TO STEER · UP / DOWN TO CLIMB / DIVE</div>
+            </div>
+            <div id="touch-buttons">
+                <button id="btn-roll" class="tbtn small">ROLL</button>
+                <button id="btn-boost" class="tbtn small">BOOST</button>
+                <button id="btn-fire" class="tbtn big">FIRE</button>
+            </div>
+            <div id="touch-top">
+                <button id="btn-scores" class="tbtn tiny">SCORES</button>
+                <button id="btn-settings" class="tbtn tiny">⚙</button>
+            </div>
+        </div>
+
+        <div id="rotate-overlay">
+            <div class="rotate-icon">📱</div>
+            <div class="rotate-title">Turn your phone sideways</div>
+            <div class="rotate-sub">The cockpit is built for landscape. You can still play like this if you prefer.</div>
+            <button id="rotate-dismiss">Play anyway</button>
         </div>
 
         <div id="match-countdown"><div class="cd-label">MATCH STARTS IN</div><div class="cd-num">5</div></div>

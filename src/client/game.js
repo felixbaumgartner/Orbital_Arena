@@ -4102,7 +4102,7 @@ class Game {
     if (behind) { x = w - x; y = h - y; }
     // Keep the marker clear of the HUD: controls panel (left), radar
     // (right), compass stack (top), hint + attitude cluster (bottom)
-    const inset = { left: 240, right: 200, top: 150, bottom: 230 };
+    const inset = { left: 240, right: 330, top: 150, bottom: 230 };
     const onScreen = !behind && x > inset.left && x < w - inset.right && y > inset.top && y < h - inset.bottom;
     let angle = 0;
     if (!onScreen) {
@@ -4244,7 +4244,7 @@ class Game {
     const behind = v.z > 1;
     let x = (v.x * 0.5 + 0.5) * w, y = (-v.y * 0.5 + 0.5) * h;
     if (behind) { x = w - x; y = h - y; }
-    const inset = { left: 240, right: 200, top: 150, bottom: 230 };
+    const inset = { left: 240, right: 330, top: 150, bottom: 230 };
     const onScreen = !behind && x > inset.left && x < w - inset.right && y > inset.top && y < h - inset.bottom;
     let angle = 0;
     if (!onScreen) {
@@ -4398,7 +4398,7 @@ class Game {
    * Projects a world point to the screen; if it is out of view (or behind
    * the camera) the point is pushed to the HUD-safe edge with an arrow angle.
    */
-  screenMarkerFor(pos, inset = { left: 240, right: 200, top: 150, bottom: 230 }) {
+  screenMarkerFor(pos, inset = { left: 240, right: 330, top: 150, bottom: 230 }) {
     const v = this._smVec || (this._smVec = new THREE.Vector3());
     v.copy(pos).project(this.camera);
     const w = window.innerWidth, h = window.innerHeight;
@@ -4435,7 +4435,7 @@ class Game {
     const enemyRange = this.radarSweepActive() ? 5000 : 1200;
     const tmp = this._edgeVec || (this._edgeVec = new THREE.Vector3());
     // Keep clear of the score bar / compass (top), controls (left), radar (right), hint + attitude (bottom)
-    const EDGE_INSET = { left: 235, right: 205, top: 175, bottom: 235 };
+    const EDGE_INSET = { left: 235, right: 330, top: 175, bottom: 235 };
 
     // Enemy planes out of view (in-view ones already carry a name tag)
     for (const [id, other] of this.players) {

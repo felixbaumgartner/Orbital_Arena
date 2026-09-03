@@ -583,6 +583,67 @@
             cursor: pointer;
         }
 
+        /* Notification column: everything that talks to you lives on the right,
+           under the radar, so the centre of the screen stays clear */
+        #notify-column {
+            position: fixed;
+            right: 1rem;
+            top: 20.5rem;
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 6px;
+            pointer-events: none;
+            z-index: 8;
+        }
+
+        #notify-column > * {
+            position: static !important;
+            transform: none !important;
+            left: auto !important;
+            top: auto !important;
+            bottom: auto !important;
+            margin: 0 !important;
+        }
+
+        #notify-column #kill-feed { align-items: stretch; }
+        #notify-column .kill-entry { text-align: right; }
+
+        #notify-column #kill-banner { font-size: 1.05rem; text-align: right; }
+        #notify-column #kill-banner.show { animation: sideFade 2.4s ease-out forwards; }
+
+        #notify-column #medal { border-radius: 10px; padding: 0.4rem 0.8rem; gap: 0.5rem; }
+        #notify-column #medal .medal-title { font-size: 1rem; letter-spacing: 0.12em; }
+        #notify-column #medal .medal-sub { display: block; width: 100%; font-size: 0.72rem; }
+        #notify-column #medal.show { animation: sideIn 0.35s cubic-bezier(0.2, 1.4, 0.4, 1); flex-wrap: wrap; }
+
+        #notify-column #toasts { align-items: stretch; }
+        #notify-column .toast { min-width: 0; animation: sideIn 0.3s ease-out, toastOut 0.5s ease-in 4s forwards; }
+
+        #notify-column #hint {
+            white-space: normal;
+            text-align: left;
+            font-size: 0.98rem;
+            padding: 0.5rem 0.8rem;
+            animation: sideIn 0.35s ease-out;
+        }
+
+        @keyframes sideIn {
+            from { opacity: 0; transform: translateX(24px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        @keyframes sideFade {
+            0% { opacity: 0; transform: translateX(24px); }
+            12% { opacity: 1; transform: translateX(0); }
+            80% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
+        body.photo #notify-column > :not(#toasts) { display: none !important; }
+        body.simple #notify-column #kill-feed { display: none !important; }
+
         /* Photo mode */
         body.photo #hud,
         body.photo #chat {
@@ -1647,13 +1708,9 @@
             </div>
             <div id="lead"></div>
             <div id="waypoint"><div class="wp-arrow"></div><div class="wp-diamond"></div><div class="wp-label"></div></div>
-            <div id="hint" class="glass"></div>
             <div id="popups"></div>
-            <div id="medal"><span class="medal-icon"></span><span class="medal-title"></span><span class="medal-sub"></span></div>
             <div id="controls-hint" class="glass"><span class="key">H</span> controls</div>
             <div id="hitmarker"></div>
-            <div id="kill-banner"></div>
-            <div id="kill-feed"></div>
             <div id="pullup">PULL UP</div>
 
             <canvas id="radar" width="160" height="160"></canvas>
@@ -1680,11 +1737,18 @@
             </table>
         </div>
 
+        <div id="notify-column">
+            <div id="kill-feed"></div>
+            <div id="kill-banner"></div>
+            <div id="medal"><span class="medal-icon"></span><span class="medal-title"></span><span class="medal-sub"></span></div>
+            <div id="toasts"></div>
+            <div id="hint" class="glass"></div>
+        </div>
+
         <div id="match-countdown"><div class="cd-label">MATCH STARTS IN</div><div class="cd-num">5</div></div>
 
         <div id="boost-vignette" class="vignette"></div>
         <div id="damage-vignette" class="vignette"></div>
-        <div id="toasts"></div>
 
         <div id="settings-panel" class="ui-element glass">
             <h2>Settings</h2>

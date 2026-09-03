@@ -333,6 +333,39 @@ export class Instruments {
   // --- Edge markers ----------------------------------------------------------------------------
 
   /** list: [{ id, x, y, angle, inView, cls, label, owner }] */
+  /** rows: [{ id, cls, name, dist, rel (deg, clockwise from nose), owner, target }] */
+  updateNavPanel(rows) {
+    const panel = document.getElementById('nav-panel');
+    const box = document.getElementById('nav-rows');
+    if (!panel || !box) return;
+    panel.classList.toggle('show', rows.length > 0);
+    if (!this.navPool) this.navPool = new Map();
+    const seen = new Set();
+    rows.forEach((r, i) => {
+      seen.add(r.id);
+      let el = this.navPool.get(r.id);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'nav-row';
+        const arrow = document.createElement('span'); arrow.className = 'nav-arrow';
+        const name = document.createElement('span'); name.className = 'nav-name';
+        const dist = document.createElement('span'); dist.className = 'nav-dist';
+        const owner = document.createElement('span'); owner.className = 'nav-owner';
+        el.append(arrow, name, dist, owner);
+        this.navPool.set(r.id, el);
+      }
+      el.className = `nav-row ${r.cls}${r.target ? ' target' : ''}`;
+      el.children[0].style.transform = `rotate(${r.rel}deg)`;
+      if (el.children[1].textContent !== r.name) el.children[1].textContent = r.name;
+      el.children[2].textContent = `${Math.round(r.dist)} m`;
+      el.children[3].textContent = r.owner || '';
+      if (box.children[i] !== el) box.insertBefore(el, box.children[i] || null);
+    });
+    for (const [id, el] of this.navPool) {
+      if (!seen.has(id)) { el.remove(); this.navPool.delete(id); }
+    }
+  }
+
   updateEdgeMarkers(list) {
     if (!this.edge) return;
     const seen = new Set();

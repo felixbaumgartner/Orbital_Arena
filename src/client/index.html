@@ -654,6 +654,23 @@
             100% { opacity: 0; }
         }
 
+        /* Navigation list: every objective and enemy, with a bearing arrow */
+        #nav-panel { padding: 0.35rem 0.6rem 0.45rem; display: none; }
+        #nav-panel.show { display: block; }
+        #nav-panel .nav-title { font-size: 0.6rem; letter-spacing: 0.2em; text-transform: uppercase; color: #90a4ae; margin-bottom: 0.2rem; }
+        .nav-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.05em; line-height: 1.5; white-space: nowrap; }
+        .nav-row .nav-arrow { width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 11px solid currentColor; flex: none; }
+        .nav-row .nav-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+        .nav-row .nav-dist { color: #cfd8dc; font-weight: 600; min-width: 4.2em; text-align: right; }
+        .nav-row .nav-owner { font-size: 0.6rem; letter-spacing: 0.15em; min-width: 3.4em; text-align: right; }
+        .nav-row.enemy { color: #ff6b6b; }
+        .nav-row.mill-none { color: #e8e8e8; }
+        .nav-row.mill-red { color: #ff8a80; }
+        .nav-row.mill-blue { color: #8fbbff; }
+        .nav-row.target .nav-name::before { content: '\25C6  '; color: var(--accent); }
+        body.touch #nav-panel { padding: 0.25rem 0.5rem; }
+        body.touch .nav-row { font-size: 0.7rem; }
+
         body.photo #notify-column > :not(#toasts) { display: none !important; }
         body.simple #notify-column #kill-feed { display: none !important; }
 
@@ -1925,6 +1942,7 @@
         </div>
 
         <div id="notify-column">
+            <div id="nav-panel" class="glass"><div class="nav-title">Targets</div><div id="nav-rows"></div></div>
             <div id="kill-feed"></div>
             <div id="kill-banner"></div>
             <div id="medal"><span class="medal-icon"></span><span class="medal-title"></span><span class="medal-sub"></span></div>

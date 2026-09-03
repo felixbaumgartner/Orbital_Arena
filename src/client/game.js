@@ -4521,35 +4521,55 @@ class Game {
     // Keep clear of the score bar / compass (top), controls (left), radar (right), hint + attitude (bottom)
     const EDGE_INSET = this.hudInset(true);
 
-    // Enemy planes out of view (in-view ones already carry a name tag)
+    // Side list rows: bearing relative to the nose, clockwise
+    const headingDeg = ((-this.shipRotation * 180 / Math.PI) % 360 + 360) % 360;
+    const relBearing = (x, z) => {
+      const dx = x - me.position.x, dz = z - me.position.z;
+      const rel = Math.atan2(dx, -dz) * 180 / Math.PI - headingDeg;
+      return ((rel + 540) % 360) - 180;
+    };
+    const rows = [];
+
+    // Enemy planes: nearest few, listed on the side (in-view ones also carry a box + tag)
+    const enemies = [];
     for (const [id, other] of this.players) {
       if (id === this.localPlayer.id || !other.visible) continue;
       const p = info[id];
       if (!p || p.team === myTeam) continue;
       const dist = other.position.distanceTo(me.position);
       if (dist > enemyRange) continue;
-      const m = this.screenMarkerFor(other.position, EDGE_INSET);
-      if (m.inView) continue;
       const dy = other.position.y - me.position.y;
-      list.push({ id: `e:${id}`, x: m.x, y: m.y, angle: m.angle, inView: false, cls: 'enemy', dist,
-        label: `${p.username || 'Enemy'} ${Math.round(dist * 3)} m${dy > 12 ? ' ▲' : dy < -12 ? ' ▼' : ''}` });
+      enemies.push({ id: `e:${id}`, cls: 'enemy', dist: dist * 3, rel: relBearing(other.position.x, other.position.z),
+        name: `${p.username || 'Enemy'}${dy > 12 ? ' ▲' : dy < -12 ? ' ▼' : ''}`, owner: p.isBot ? 'BOT' : '' });
     }
+    enemies.sort((a, b) => a.dist - b.dist);
+    rows.push(...enemies.slice(0, this.isTouch ? 2 : 3));
 
-    // Windmills: label in view, arrow out of view (Domination only)
+    // Windmills: a label over the tower when it's in view, and a row on the
+    // side for every mill the team doesn't hold (Domination only)
     if (this.mode !== 'tdm') {
+      const millRows = [];
       for (const mill of CAPTURE_WINDMILLS) {
         const st = this.windmillStates[mill.id];
         const dist = Math.hypot(mill.x - me.position.x, mill.z - me.position.z);
-        tmp.set(mill.x, 36, mill.z);
-        if (this.waypointTargetId === mill.id) continue; // the big marker already covers it
-        const m = this.screenMarkerFor(tmp, EDGE_INSET);
         const owner = st?.team === myTeam ? 'YOURS' : st?.team ? 'ENEMY' : 'FREE';
         const cls = st?.team === 'red' ? 'mill-red' : st?.team === 'blue' ? 'mill-blue' : 'mill-none';
-        list.push({ id: `m:${mill.id}`, x: m.x, y: m.y, angle: m.angle, inView: m.inView, cls, dist,
+        if (st?.team !== myTeam) {
+          millRows.push({ id: `m:${mill.id}`, cls, dist: dist * 3, rel: relBearing(mill.x, mill.z),
+            name: `${mill.name.toUpperCase()} MILL`, owner, target: this.waypointTargetId === mill.id });
+        }
+        if (this.waypointTargetId === mill.id) continue; // the big marker already covers it
+        tmp.set(mill.x, 36, mill.z);
+        const m = this.screenMarkerFor(tmp, EDGE_INSET);
+        if (!m.inView) continue;
+        list.push({ id: `m:${mill.id}`, x: m.x, y: m.y, angle: 0, inView: true, cls, dist,
           label: `${mill.name.toUpperCase()} MILL · ${Math.round(dist * 3)} m`, owner });
       }
+      millRows.sort((a, b) => (b.target ? 1 : 0) - (a.target ? 1 : 0) || a.dist - b.dist);
+      rows.push(...millRows.slice(0, this.isTouch ? 3 : 4));
     }
-    this.instruments.updateEdgeMarkers(this.declutterMarkers(list));
+    this.instruments.updateEdgeMarkers(list);
+    this.instruments.updateNavPanel(rows);
   }
 
   /**

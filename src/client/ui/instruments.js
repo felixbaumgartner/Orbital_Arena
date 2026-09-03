@@ -29,6 +29,7 @@ export class Instruments {
     this.damageDir = document.getElementById('damage-dir');
     this.tags = document.getElementById('tags');
     this.tagPool = new Map();
+    this.boxPool = new Map();
     this.scoreboard = document.getElementById('scoreboard');
     this.damageDirTimer = null;
     this.lock = document.getElementById('lock');
@@ -302,6 +303,27 @@ export class Instruments {
         el.remove();
         this.tagPool.delete(id);
       }
+    }
+
+    // Red box on every enemy plane in view (the locked one has its bracket)
+    const boxed = new Set();
+    for (const t of list) {
+      if (t.sameTeam || t.locked || !t.box) continue;
+      boxed.add(t.id);
+      let box = this.boxPool.get(t.id);
+      if (!box) {
+        box = document.createElement('div');
+        box.className = 'foe-box';
+        this.tags.appendChild(box);
+        this.boxPool.set(t.id, box);
+      }
+      box.style.left = `${t.box.x}px`;
+      box.style.top = `${t.box.y}px`;
+      box.style.width = `${t.box.size}px`;
+      box.style.height = `${t.box.size}px`;
+    }
+    for (const [id, el] of this.boxPool) {
+      if (!boxed.has(id)) { el.remove(); this.boxPool.delete(id); }
     }
   }
 

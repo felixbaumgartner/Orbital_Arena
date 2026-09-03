@@ -40,6 +40,7 @@ const GAME_CONFIG = {
   LOCK_CONE: 22,              // degrees off the nose to show the bracket + lead circle
   AIM_ASSIST_CONE: 12,        // degrees inside which shots bend onto the lead point
   AIM_ASSIST_SNAP: 6,         // inside this, shots snap fully
+  CLIENT_HIT_RADIUS: 8,       // your bullets hit what they visibly pass through (units)
 
   // Altitude (the third dimension!)
   MIN_ALTITUDE: 8,            // ground-skimming floor
@@ -4467,6 +4468,66 @@ class Game {
     this.instruments.updateEdgeMarkers(list);
   }
 
+  /**
+   * Swept test of one of my bullets against every enemy plane as drawn on
+   * screen. On a hit: impact burst, bullet removed, claim sent to the server.
+   */
+  registerLocalHit(id, projectile, prev, teamOf) {
+    if (!this.socket || !this.isConnected) return false;
+    const r = GAME_CONFIG.CLIENT_HIT_RADIUS;
+    for (const [pid, other] of this.players) {
+      if (pid === this.localPlayer.id || !other.visible || teamOf[pid] === this.localPlayer.team) continue;
+      if (this.pointSegmentDistance(other.position, prev, projectile.position) > r) continue;
+      this.spawnHitSpark(projectile.position);
+      this.scene.remove(projectile);
+      this.projectiles.delete(id);
+      try {
+        this.socket.emit('hitClaim', {
+          gameId: this.gameState?.id, projectileId: id, targetId: pid,
+          position: { x: projectile.position.x, y: projectile.position.y, z: projectile.position.z },
+        });
+      } catch (e) { console.error('hitClaim failed', e); }
+      return true;
+    }
+    return false;
+  }
+
+  pointSegmentDistance(p, a, b) {
+    const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z;
+    const apx = p.x - a.x, apy = p.y - a.y, apz = p.z - a.z;
+    const ab2 = abx * abx + aby * aby + abz * abz;
+    const t = ab2 > 0 ? Math.max(0, Math.min(1, (apx * abx + apy * aby + apz * abz) / ab2)) : 0;
+    const cx = a.x + abx * t - p.x, cy = a.y + aby * t - p.y, cz = a.z + abz * t - p.z;
+    return Math.sqrt(cx * cx + cy * cy + cz * cz);
+  }
+
+  /** Small impact burst where a bullet struck a plane */
+  spawnHitSpark(position) {
+    const flash = new THREE.Mesh(
+      new THREE.SphereGeometry(0.9, 6, 6),
+      new THREE.MeshBasicMaterial({ color: 0xFFF2A0, transparent: true, opacity: 0.95 })
+    );
+    flash.position.copy(position);
+    flash.userData = { vel: new THREE.Vector3(), life: 0.14, maxLife: 0.14, isFlash: true };
+    this.scene.add(flash);
+    this.smokeParticles.push(flash);
+    for (let i = 0; i < 7; i++) {
+      const p = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22, 4, 4),
+        new THREE.MeshBasicMaterial({ color: i % 2 ? 0xFF8A2A : 0xFFD070, transparent: true, opacity: 0.95 })
+      );
+      p.position.copy(position);
+      const a = Math.random() * Math.PI * 2, b = (Math.random() - 0.5) * Math.PI;
+      const spd = 10 + Math.random() * 14;
+      p.userData = {
+        vel: new THREE.Vector3(Math.cos(a) * Math.cos(b) * spd, Math.sin(b) * spd + 3, Math.sin(a) * Math.cos(b) * spd),
+        life: 0.25 + Math.random() * 0.2, maxLife: 0.45, grav: true,
+      };
+      this.scene.add(p);
+      this.smokeParticles.push(p);
+    }
+  }
+
   /** Floating name / distance / BOT tags over nearby planes */
   updateNameTags() {
     if (!this.instruments || !this.localPlayer) return;
@@ -4484,8 +4545,11 @@ class Game {
       v.set(ship.position.x, ship.position.y + 3.5, ship.position.z).project(this.camera);
       if (v.z > 1 || v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) continue;
       const p = info[id];
+      const c = this._tagCenter || (this._tagCenter = new THREE.Vector3());
+      c.copy(ship.position).project(this.camera);
+      const box = { x: (c.x * 0.5 + 0.5) * w, y: (-c.y * 0.5 + 0.5) * h, size: Math.max(18, Math.min(72, 2600 / dist)) };
       list.push({
-        id, x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h,
+        id, x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h, box, locked: this.lockedId === id,
         name: p?.username || 'Pilot', dist: dist * 3, dy: (ship.position.y - me.position.y) * 3,
         team: p?.team || 'red', isBot: !!p?.isBot, sameTeam: p?.team === this.localPlayer.team,
       });
@@ -4520,9 +4584,16 @@ class Game {
       const playerShip = this.players.get(this.localPlayer.id);
       this.updatePowerups(delta, playerShip);
       this.updateRadar(playerShip);
+      const teamOf = {};
+      if (this.gameState?.players) for (const p of this.gameState.players) teamOf[p.id] = p.team;
+      const myPrefix = this.localPlayer.id + '_';
       this.projectiles.forEach((projectile, id) => {
         if (projectile.velocity) {
+          const prev = this._prevProj || (this._prevProj = new THREE.Vector3());
+          prev.copy(projectile.position);
           projectile.position.add(projectile.velocity.clone().multiplyScalar(delta));
+          // My bullets hit whatever they visibly pass through
+          if (id.startsWith(myPrefix) && this.registerLocalHit(id, projectile, prev, teamOf)) return;
           if (playerShip) {
             const dist = projectile.position.distanceTo(playerShip.position);
             if (dist > GAME_CONFIG.PROJECTILE_DESPAWN_DIST) {

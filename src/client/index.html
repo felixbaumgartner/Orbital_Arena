@@ -959,6 +959,98 @@
 
         #damage-dir.show { opacity: 1; transition: none; }
 
+        /* Target lock bracket + lead indicator */
+        #lock {
+            position: fixed;
+            left: 0;
+            top: 0;
+            display: none;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            z-index: 6;
+        }
+
+        #lock .lock-box {
+            width: 60px;
+            height: 60px;
+            border: 2px solid rgba(255, 255, 255, 0.75);
+            border-radius: 4px;
+            box-sizing: border-box;
+            transition: border-color 0.12s, box-shadow 0.12s;
+        }
+
+        #lock.locked .lock-box {
+            border-color: #ff4a3d;
+            box-shadow: 0 0 10px rgba(255, 74, 61, 0.7), inset 0 0 10px rgba(255, 74, 61, 0.35);
+        }
+
+        #lock .lock-info {
+            position: absolute;
+            left: 50%;
+            top: 100%;
+            transform: translateX(-50%);
+            margin-top: 4px;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        #lock .lock-name {
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            color: #fff;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+        }
+
+        #lock.locked .lock-name { color: #ff8a80; }
+
+        #lock .lock-health {
+            width: 56px;
+            height: 5px;
+            margin: 3px auto 0;
+            background: rgba(0, 0, 0, 0.55);
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        #lock .lock-health-fill {
+            height: 100%;
+            width: 100%;
+            background: #ff5a4f;
+            transition: width 0.15s;
+        }
+
+        #lead {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 16px;
+            height: 16px;
+            margin: -8px 0 0 -8px;
+            border: 2px solid #FFD23F;
+            border-radius: 50%;
+            display: none;
+            pointer-events: none;
+            box-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+            z-index: 6;
+        }
+
+        #lead::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 3px;
+            height: 3px;
+            margin: -1.5px 0 0 -1.5px;
+            background: #FFD23F;
+            border-radius: 50%;
+        }
+
+        #lead.locked { border-color: #ff4a3d; }
+        #lead.locked::after { background: #ff4a3d; }
+
         /* Plane name tags */
         #tags { position: fixed; top: 0; left: 0; pointer-events: none; }
 
@@ -1356,6 +1448,14 @@
             <div class="crosshair"></div>
             <div id="damage-dir"></div>
             <div id="tags"></div>
+            <div id="lock">
+                <div class="lock-box"></div>
+                <div class="lock-info">
+                    <span class="lock-name"></span>
+                    <div class="lock-health"><div class="lock-health-fill"></div></div>
+                </div>
+            </div>
+            <div id="lead"></div>
             <div id="waypoint"><div class="wp-arrow"></div><div class="wp-diamond"></div><div class="wp-label"></div></div>
             <div id="hint" class="glass"></div>
             <div id="controls-hint" class="glass"><span class="key">H</span> controls</div>

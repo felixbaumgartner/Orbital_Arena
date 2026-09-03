@@ -31,6 +31,8 @@ export class Instruments {
     this.tagPool = new Map();
     this.scoreboard = document.getElementById('scoreboard');
     this.damageDirTimer = null;
+    this.lock = document.getElementById('lock');
+    this.lead = document.getElementById('lead');
 
     this.bindSettingsPanel();
     this.applyFpsVisibility();
@@ -150,6 +152,38 @@ export class Instruments {
     if (arrow) arrow.style.transform = `rotate(${wp.angle}rad)`;
     const label = el.querySelector('.wp-label');
     if (label && label.textContent !== wp.label) label.textContent = wp.label;
+  }
+
+  // --- Target lock + lead ------------------------------------------------------------------
+
+  /** info: { visible, x, y, size, locked, name, health, lead: { visible, x, y } } */
+  updateLock(info) {
+    if (!this.lock || !this.lead) return;
+    if (!info || !info.visible) {
+      this.lock.style.display = 'none';
+      this.lead.style.display = 'none';
+      return;
+    }
+    this.lock.style.display = 'block';
+    this.lock.style.left = `${info.x}px`;
+    this.lock.style.top = `${info.y}px`;
+    this.lock.classList.toggle('locked', !!info.locked);
+    const box = this.lock.firstElementChild;
+    box.style.width = `${info.size}px`;
+    box.style.height = `${info.size}px`;
+    const name = this.lock.querySelector('.lock-name');
+    if (name.textContent !== info.name) name.textContent = info.name;
+    const fill = this.lock.querySelector('.lock-health-fill');
+    fill.style.width = `${Math.max(0, Math.min(100, info.health))}%`;
+
+    if (info.lead && info.lead.visible) {
+      this.lead.style.display = 'block';
+      this.lead.style.left = `${info.lead.x}px`;
+      this.lead.style.top = `${info.lead.y}px`;
+      this.lead.classList.toggle('locked', !!info.locked);
+    } else {
+      this.lead.style.display = 'none';
+    }
   }
 
   // --- Damage direction --------------------------------------------------------------------

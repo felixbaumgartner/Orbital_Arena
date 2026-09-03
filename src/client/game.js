@@ -25,15 +25,21 @@ const GAME_CONFIG = {
   FOG_FAR: 950,
   GROUND_SIZE: 2000,
 
-  PROJECTILE_DESPAWN_DIST: 250,
+  PROJECTILE_DESPAWN_DIST: 340,
 
   FLIGHT_HEIGHT: 42,          // cruise altitude: above spires, lighthouses and poplars
   PLANE_COLLISION_RADIUS: 4,
   CRASH_DURATION: 1400,
   CRASH_HEALTH_PENALTY: 20,   // must match server CRASH_DAMAGE
   CRASH_GRACE: 2.0,           // seconds of collision immunity after a crash respawn
-  PROJECTILE_SPEED: 120,
-  FIRE_COOLDOWN: 0.25,
+  PROJECTILE_SPEED: 220,      // must match server PROJECTILE_SPEED
+  FIRE_COOLDOWN: 0.15,
+
+  // Targeting
+  LOCK_RANGE: 360,            // enemies farther than this get no bracket
+  LOCK_CONE: 22,              // degrees off the nose to show the bracket + lead circle
+  AIM_ASSIST_CONE: 12,        // degrees inside which shots bend onto the lead point
+  AIM_ASSIST_SNAP: 6,         // inside this, shots snap fully
 
   // Altitude (the third dimension!)
   MIN_ALTITUDE: 8,            // ground-skimming floor
@@ -98,7 +104,7 @@ const GAME_CONFIG = {
   ENERGY_DRAIN_RATE: 20,
   ENERGY_REGEN_RATE: 10,
 
-  PROJECTILE_COLOR: 0x00ff00,
+  PROJECTILE_COLOR: 0xFFE9A8,
 
   USERNAME_MAX_LENGTH: 15,
   USERNAME_MIN_LENGTH: 1,
@@ -265,6 +271,11 @@ class Game {
     this.scoreboardOpen = false;
     this.rules = { killScore: 5, millTickSeconds: 5 };
     this.firstFlight = false;
+
+    // Targeting: last known enemy health, current bracketed target
+    this.knownHealth = {};
+    this.currentTarget = null;
+    this.lockedId = null;
 
     this.init();
 
@@ -2304,13 +2315,32 @@ class Game {
   }
 
   createProjectile() {
-    const geometry = new THREE.SphereGeometry(0.5);
-    const material = new THREE.MeshStandardMaterial({
-      color: GAME_CONFIG.PROJECTILE_COLOR,
-      emissive: GAME_CONFIG.PROJECTILE_COLOR,
-      emissiveIntensity: 0.5,
-    });
-    return new THREE.Mesh(geometry, material);
+    if (!this.tracerGeo) {
+      this.tracerGeo = new THREE.CylinderGeometry(0.16, 0.26, 5.5, 6);
+      this.tracerGeo.rotateX(Math.PI / 2); // axis along +Z so lookAt() aims it
+      this.tracerMat = new THREE.MeshBasicMaterial({ color: GAME_CONFIG.PROJECTILE_COLOR, toneMapped: false });
+      this.tracerMat.userData.shared = true;
+      this.tracerGlowMat = new THREE.SpriteMaterial({
+        map: this.textures.glow(), color: 0xFFC46B, transparent: true, depthWrite: false,
+        blending: THREE.AdditiveBlending, opacity: 0.9,
+      });
+      this.tracerGlowMat.userData.shared = true;
+    }
+    const group = new THREE.Group();
+    const rod = new THREE.Mesh(this.tracerGeo, this.tracerMat);
+    group.add(rod);
+    const glow = new THREE.Sprite(this.tracerGlowMat);
+    glow.scale.set(2.6, 2.6, 1);
+    group.add(glow);
+    return group;
+  }
+
+  /** Points a tracer along its velocity (call once after velocity is set) */
+  orientProjectile(projectile) {
+    if (!projectile.velocity) return;
+    const target = this._orientVec || (this._orientVec = new THREE.Vector3());
+    target.copy(projectile.position).add(projectile.velocity);
+    projectile.lookAt(target);
   }
 
   fireProjectile(ship) {
@@ -2333,10 +2363,12 @@ class Game {
     );
     projectile.velocity = new THREE.Vector3(dir.x, dir.y, dir.z)
       .multiplyScalar(GAME_CONFIG.PROJECTILE_SPEED);
+    this.orientProjectile(projectile);
     const projectileId = `${this.localPlayer.id}_${Date.now()}`;
     this.scene.add(projectile);
     this.projectiles.set(projectileId, projectile);
     this.playSound('shot');
+    this.shake(0.05, 0.07); // recoil kick
 
     if (this.socket && this.isConnected) {
       this.socket.emit('fireProjectile', {
@@ -2493,6 +2525,19 @@ class Game {
             // Rotation arrives either as a serialized Euler (_x/_y/_z from
             // human clients) or a plain object (bots).
             const r = data.rotation || {};
+            const nowMs = performance.now();
+            const prevPos = ship.userData.netPos, prevT = ship.userData.netTime;
+            if (prevPos && prevT) {
+              const dt = (nowMs - prevT) / 1000;
+              if (dt > 0.02 && dt < 1) {
+                ship.userData.vel = {
+                  x: (data.position.x - prevPos.x) / dt,
+                  y: ((data.position.y || 0) - (prevPos.y || 0)) / dt,
+                  z: (data.position.z - prevPos.z) / dt,
+                };
+              }
+            }
+            ship.userData.netTime = nowMs;
             ship.userData.netPos = data.position;
             ship.userData.netRot = {
               x: r._x !== undefined ? r._x : (r.x || 0),
@@ -2512,6 +2557,7 @@ class Game {
             (data.direction.y || 0) * GAME_CONFIG.PROJECTILE_SPEED,
             data.direction.z * GAME_CONFIG.PROJECTILE_SPEED
           );
+          this.orientProjectile(projectile);
           this.scene.add(projectile);
           this.projectiles.set(data.projectileId, projectile);
         }
@@ -2564,6 +2610,8 @@ class Game {
           if (data.killed) this.handleLocalDeath(this.nameOf(data.attackerId));
         }
 
+        if (typeof data.targetHealth === 'number') this.knownHealth[data.targetId] = data.targetHealth;
+
         // Keep scoreboard stats in sync
         if (this.gameState?.players) {
           for (const p of this.gameState.players) {
@@ -2590,6 +2638,7 @@ class Game {
       });
 
       this.socket.on('playerRespawn', (data) => {
+        this.knownHealth[data.playerId] = typeof data.health === 'number' ? data.health : 100;
         const ship = this.players.get(data.playerId);
         if (ship) {
           ship.position.set(data.position.x, GAME_CONFIG.FLIGHT_HEIGHT, data.position.z);
@@ -2745,14 +2794,33 @@ class Game {
         gain.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
         osc.start(t); osc.stop(t + 0.65);
         break;
-      case 'hitconfirm':
-        // Crisp high tick — "your shot landed"
+      case 'hitconfirm': {
+        // Crisp tick plus a low thud — "your shot landed"
         osc.type = 'sine';
         osc.frequency.setValueAtTime(1300, t);
         osc.frequency.exponentialRampToValueAtTime(1800, t + 0.05);
         gain.gain.setValueAtTime(0.16, t);
         gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
         osc.start(t); osc.stop(t + 0.07);
+        const thud = ctx.createOscillator();
+        const thudGain = ctx.createGain();
+        thud.type = 'triangle';
+        thud.frequency.setValueAtTime(160, t);
+        thud.frequency.exponentialRampToValueAtTime(55, t + 0.14);
+        thudGain.gain.setValueAtTime(0.28, t);
+        thudGain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+        thud.connect(thudGain).connect(master);
+        thud.start(t); thud.stop(t + 0.16);
+        break;
+      }
+      case 'lock':
+        // Short two-note chirp when the bracket turns red
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, t);
+        osc.frequency.setValueAtTime(1320, t + 0.06);
+        gain.gain.setValueAtTime(0.1, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+        osc.start(t); osc.stop(t + 0.14);
         break;
       case 'warning':
         // Two-tone terrain alert
@@ -3342,6 +3410,7 @@ class Game {
     this.updateFlightInstruments(ship, speed, delta);
     this.updateOnboarding(ship, delta, speed);
     this.updateWaypoint(ship);
+    this.updateTargeting(ship);
 
     // The key legend retires itself once you've had time to read it
     if (this.controlsPanelTimer > 0) {
@@ -3724,7 +3793,7 @@ class Game {
           html: `Hold ${key('Shift')} to boost (it drains energy)`,
           check: (g) => g.controls.boost && g.localPlayer.energy > 0, need: 0.5 },
         { label: 'Step 4 of 5 · Guns',
-          html: `${key('Space')} or ${key('LMB')} to shoot — bots ignore you until you do`,
+          html: `Put the crosshair on the yellow lead circle, then ${key('Space')} or ${key('LMB')} — the box turns red when you're locked`,
           check: (g) => g.animationTime - g.lastFireTime < 0.3, need: 0.2 },
         { label: 'Step 5 of 5 · Objective',
           html: 'Follow the yellow marker and circle the windmill to capture it',
@@ -3848,37 +3917,105 @@ class Game {
   }
 
   /**
-   * Gentle aim assist: if an enemy sits within a 7° cone of the nose and
-   * inside gun range, the shot is steered onto them (with a little lead).
+   * Where to shoot so the bullet and the target meet: solves the intercept
+   * of a straight-line shot against the target's estimated velocity.
+   * Returns { point, dir, dist, angle } or null.
    */
-  applyAimAssist(ship, dir) {
-    if (this.instruments?.settings.assist === false || !this.gameState?.players) return;
-    const myTeam = this.localPlayer?.team;
-    const teamOf = {};
-    for (const p of this.gameState.players) teamOf[p.id] = p.team;
-    const cone = Math.cos(7 * Math.PI / 180);
-    let best = null, bestDot = cone;
-    const to = this._aimVec || (this._aimVec = new THREE.Vector3());
-    for (const [id, other] of this.players) {
-      if (id === this.localPlayer.id || !other.visible || teamOf[id] === myTeam) continue;
-      to.subVectors(other.position, ship.position);
-      const dist = to.length();
-      if (dist > 220 || dist < 6) continue;
-      // Lead the target by its recent movement
-      const np = other.userData.netPos;
-      if (np) {
-        const t = dist / GAME_CONFIG.PROJECTILE_SPEED;
-        to.x += (np.x - other.position.x) * t * 2;
-        to.z += (np.z - other.position.z) * t * 2;
-      }
-      to.normalize();
-      const d = to.x * dir.x + to.y * dir.y + to.z * dir.z;
-      if (d > bestDot) { bestDot = d; best = to.clone(); }
+  interceptFor(ship, other, noseDir) {
+    const D = this._icD || (this._icD = new THREE.Vector3());
+    const V = this._icV || (this._icV = new THREE.Vector3());
+    const P = this._icP || (this._icP = new THREE.Vector3());
+    D.subVectors(other.position, ship.position);
+    const dist = D.length();
+    if (dist < 4) return null;
+    const vel = other.userData.vel || { x: 0, y: 0, z: 0 };
+    V.set(vel.x, vel.y, vel.z);
+    const s = GAME_CONFIG.PROJECTILE_SPEED;
+    const a = V.dot(V) - s * s;
+    const b = 2 * D.dot(V);
+    const c = D.dot(D);
+    let t = dist / s;
+    const disc = b * b - 4 * a * c;
+    if (Math.abs(a) > 1e-4 && disc >= 0) {
+      const t1 = (-b - Math.sqrt(disc)) / (2 * a);
+      const t2 = (-b + Math.sqrt(disc)) / (2 * a);
+      const best = [t1, t2].filter(v => v > 0).sort((x, y) => x - y)[0];
+      if (best) t = best;
     }
-    if (best) { dir.x = best.x; dir.y = best.y; dir.z = best.z; }
+    P.copy(other.position).addScaledVector(V, t);
+    const dir = P.clone().sub(ship.position).normalize();
+    const angle = Math.acos(Math.max(-1, Math.min(1, dir.dot(noseDir)))) * 180 / Math.PI;
+    return { point: P.clone(), dir, dist, angle };
   }
 
-  /** Floating name / distance / BOT tags over nearby planes */
+  /**
+   * Picks the enemy closest to the nose inside the lock cone, draws the
+   * bracket, health bar and lead circle, and plays a tone on lock.
+   */
+  updateTargeting(ship) {
+    if (!this.instruments) return;
+    const myTeam = this.localPlayer?.team;
+    const info = {};
+    if (this.gameState?.players) for (const p of this.gameState.players) info[p.id] = p;
+    const cp = Math.cos(this.pitchAngle), sp = Math.sin(this.pitchAngle);
+    const nose = this._noseVec || (this._noseVec = new THREE.Vector3());
+    nose.set(-Math.sin(this.shipRotation) * cp, sp, -Math.cos(this.shipRotation) * cp);
+
+    let best = null;
+    for (const [id, other] of this.players) {
+      if (id === this.localPlayer.id || !other.visible) continue;
+      const p = info[id];
+      if (!p || p.team === myTeam) continue;
+      const ic = this.interceptFor(ship, other, nose);
+      if (!ic || ic.dist > GAME_CONFIG.LOCK_RANGE || ic.angle > GAME_CONFIG.LOCK_CONE) continue;
+      if (!best || ic.angle < best.ic.angle) best = { id, other, p, ic };
+    }
+
+    if (!best) {
+      this.currentTarget = null;
+      this.lockedId = null;
+      this.instruments.updateLock({ visible: false });
+      return;
+    }
+
+    const locked = best.ic.angle <= GAME_CONFIG.AIM_ASSIST_CONE;
+    this.currentTarget = { id: best.id, dir: best.ic.dir, angle: best.ic.angle };
+    if (locked && this.lockedId !== best.id) this.playSound('lock');
+    this.lockedId = locked ? best.id : null;
+
+    const v = this._lockVec || (this._lockVec = new THREE.Vector3());
+    const w = window.innerWidth, h = window.innerHeight;
+    v.copy(best.other.position).project(this.camera);
+    const onScreen = v.z < 1 && v.x > -1 && v.x < 1 && v.y > -1 && v.y < 1;
+    const size = Math.max(26, Math.min(96, 3200 / best.ic.dist));
+    v.set(best.ic.point.x, best.ic.point.y, best.ic.point.z).project(this.camera);
+    const lead = { visible: v.z < 1 && Math.abs(v.x) < 1 && Math.abs(v.y) < 1, x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h };
+    const bx = this._lockBox || (this._lockBox = new THREE.Vector3());
+    bx.copy(best.other.position).project(this.camera);
+    this.instruments.updateLock({
+      visible: onScreen, x: (bx.x * 0.5 + 0.5) * w, y: (-bx.y * 0.5 + 0.5) * h, size, locked,
+      name: `${best.p.username || 'Enemy'} · ${Math.round(best.ic.dist * 3)} m`,
+      health: this.knownHealth[best.id] ?? best.p.health ?? 100,
+      lead,
+    });
+  }
+
+  /**
+   * Magnetic aim assist: inside AIM_ASSIST_SNAP degrees the shot snaps to
+   * the lead point; out to AIM_ASSIST_CONE it bends progressively less.
+   */
+  applyAimAssist(ship, dir) {
+    if (this.instruments?.settings.assist === false) return;
+    const t = this.currentTarget;
+    if (!t || t.angle > GAME_CONFIG.AIM_ASSIST_CONE) return;
+    const snap = GAME_CONFIG.AIM_ASSIST_SNAP, cone = GAME_CONFIG.AIM_ASSIST_CONE;
+    const strength = t.angle <= snap ? 1 : 1 - ((t.angle - snap) / (cone - snap)) * 0.65;
+    const out = this._assistVec || (this._assistVec = new THREE.Vector3());
+    out.set(dir.x, dir.y, dir.z).lerp(t.dir, strength).normalize();
+    dir.x = out.x; dir.y = out.y; dir.z = out.z;
+  }
+
+  /** Floating name / distance / BOT tags over nearby planes */  /** Floating name / distance / BOT tags over nearby planes */
   updateNameTags() {
     if (!this.instruments || !this.localPlayer) return;
     const me = this.players.get(this.localPlayer.id);

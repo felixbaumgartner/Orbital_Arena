@@ -384,6 +384,14 @@ class Game {
 
     this.setupUI();
     this.animate();
+
+    // Build stamp (settings footer + console) so we can tell what's running
+    try {
+      const stamp = typeof __BUILD__ !== 'undefined' ? __BUILD__ : 'dev';
+      console.info('Dutch Village Flight build', stamp);
+      const el = document.getElementById('build-stamp');
+      if (el) el.textContent = `Build ${stamp}`;
+    } catch (e) { /* ignore */ }
   }
 
   onSettingsChange(key, value, settings) {
@@ -3542,6 +3550,12 @@ class Game {
       mouseTurn -= this.touch.stick.x;   // push left = turn left
       mousePitch -= this.touch.stick.y;  // push up = climb
     }
+    // Deadzone: tiny mouse drift must not bank the plane
+    if (Math.abs(mouseTurn) < 0.08) mouseTurn = 0;
+    if (Math.abs(mousePitch) < 0.08) mousePitch = 0;
+    // Keyboard has priority: while the keys steer, the mouse stick is ignored
+    const keysSteering = this.controls.left || this.controls.right || this.controls.pitchUp || this.controls.pitchDown;
+    if (keysSteering) { mouseTurn = 0; mousePitch = 0; this.mouseStick.turn = 0; this.mouseStick.pitch = 0; }
 
     if (typeof this.localPlayer.energy !== 'number') this.localPlayer.energy = 100;
 
@@ -4781,6 +4795,22 @@ class Game {
       }
     }
     if (this.instruments) this.instruments.tickFps(delta);
+    this.watchFrameRate(delta);
+  }
+
+  /** If the game runs slowly for a while, suggest a lower quality once */
+  watchFrameRate(delta) {
+    if (!this.localPlayer || this.fpsAdvised) return;
+    this.fpsWindow = (this.fpsWindow || 0) + delta;
+    this.fpsFrames = (this.fpsFrames || 0) + 1;
+    if (this.fpsWindow < 8) return;
+    const fps = this.fpsFrames / this.fpsWindow;
+    this.fpsWindow = 0; this.fpsFrames = 0;
+    const q = this.instruments.settings.quality;
+    if (fps < 30 && (q === 'high' || q === 'ultra' || q === 'medium')) {
+      this.fpsAdvised = true;
+      this.instruments.toast('🐢', `Running at ${Math.round(fps)} FPS`, 'Press Esc and lower Graphics quality for smoother flying');
+    }
   }
 }
 

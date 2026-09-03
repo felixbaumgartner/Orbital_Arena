@@ -3045,7 +3045,12 @@ class Game {
       if (!p.inRange) continue;
       ctx.fillStyle = state?.team === 'red' ? '#ff5555'
         : state?.team === 'blue' ? '#5599ff' : '#cccccc';
-      ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+      ctx.fillRect(p.x - 4, p.y - 4, 8, 8);
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 8px "Rajdhani", "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(mill.name[0], p.x, p.y + 0.5);
     }
 
     // Other players (enemy red, teammate green)
@@ -4114,6 +4119,7 @@ class Game {
       angle = ang + Math.PI / 2;
     }
     const color = best.state?.team === 'red' ? '#ff6b6b' : best.state?.team === 'blue' ? '#7fb2ff' : '#FFD23F';
+    this.waypointTargetId = best.mill.id;
     this.instruments.updateWaypoint({
       visible: true, x, y, onScreen, angle,
       label: `${best.defend ? 'DEFEND' : best.state?.team ? 'RETAKE' : 'CAPTURE'} · ${best.mill.name.toUpperCase()} MILL · ${Math.round(best.dist * 3)} m`,
@@ -4387,6 +4393,80 @@ class Game {
     return this.radarSweepUntil > this.animationTime;
   }
 
+  /**
+   * Projects a world point to the screen; if it is out of view (or behind
+   * the camera) the point is pushed to the HUD-safe edge with an arrow angle.
+   */
+  screenMarkerFor(pos, inset = { left: 240, right: 200, top: 150, bottom: 230 }) {
+    const v = this._smVec || (this._smVec = new THREE.Vector3());
+    v.copy(pos).project(this.camera);
+    const w = window.innerWidth, h = window.innerHeight;
+    const behind = v.z > 1;
+    let x = (v.x * 0.5 + 0.5) * w, y = (-v.y * 0.5 + 0.5) * h;
+    if (behind) { x = w - x; y = h - y; }
+    const inView = !behind && x > inset.left && x < w - inset.right && y > inset.top && y < h - inset.bottom;
+    let angle = 0;
+    if (!inView) {
+      const cx = w / 2, cy = h / 2;
+      const ang = Math.atan2((behind ? -1 : 1) * (y - cy), (behind ? -1 : 1) * (x - cx));
+      const halfW = Math.min(cx - inset.left, w - inset.right - cx);
+      const halfH = Math.min(cy - inset.top, h - inset.bottom - cy);
+      const tx = Math.abs(Math.cos(ang)) > 1e-4 ? halfW / Math.abs(Math.cos(ang)) : Infinity;
+      const ty = Math.abs(Math.sin(ang)) > 1e-4 ? halfH / Math.abs(Math.sin(ang)) : Infinity;
+      const t = Math.min(tx, ty);
+      x = cx + Math.cos(ang) * t; y = cy + Math.sin(ang) * t; angle = ang + Math.PI / 2;
+    }
+    return { x, y, inView, angle };
+  }
+
+  /**
+   * Always-on navigation: an edge arrow for every enemy plane and every
+   * windmill you can't see, and a floating label over windmills you can.
+   */
+  updateEdgeMarkers() {
+    if (!this.instruments || !this.localPlayer) return;
+    const me = this.players.get(this.localPlayer.id);
+    if (!me || this.photoMode) { this.instruments.updateEdgeMarkers([]); return; }
+    const list = [];
+    const myTeam = this.localPlayer.team;
+    const info = {};
+    if (this.gameState?.players) for (const p of this.gameState.players) info[p.id] = p;
+    const enemyRange = this.radarSweepActive() ? 5000 : 1200;
+    const tmp = this._edgeVec || (this._edgeVec = new THREE.Vector3());
+    // Keep clear of the score bar / compass (top), controls (left), radar (right), hint + attitude (bottom)
+    const EDGE_INSET = { left: 235, right: 205, top: 175, bottom: 235 };
+
+    // Enemy planes out of view (in-view ones already carry a name tag)
+    for (const [id, other] of this.players) {
+      if (id === this.localPlayer.id || !other.visible) continue;
+      const p = info[id];
+      if (!p || p.team === myTeam) continue;
+      const dist = other.position.distanceTo(me.position);
+      if (dist > enemyRange) continue;
+      const m = this.screenMarkerFor(other.position, EDGE_INSET);
+      if (m.inView) continue;
+      const dy = other.position.y - me.position.y;
+      list.push({ id: `e:${id}`, x: m.x, y: m.y, angle: m.angle, inView: false, cls: 'enemy',
+        label: `${p.username || 'Enemy'} ${Math.round(dist * 3)} m${dy > 12 ? ' ▲' : dy < -12 ? ' ▼' : ''}` });
+    }
+
+    // Windmills: label in view, arrow out of view (Domination only)
+    if (this.mode !== 'tdm') {
+      for (const mill of CAPTURE_WINDMILLS) {
+        const st = this.windmillStates[mill.id];
+        const dist = Math.hypot(mill.x - me.position.x, mill.z - me.position.z);
+        tmp.set(mill.x, 36, mill.z);
+        if (this.waypointTargetId === mill.id) continue; // the big marker already covers it
+        const m = this.screenMarkerFor(tmp, EDGE_INSET);
+        const owner = st?.team === myTeam ? 'YOURS' : st?.team ? 'ENEMY' : 'FREE';
+        const cls = st?.team === 'red' ? 'mill-red' : st?.team === 'blue' ? 'mill-blue' : 'mill-none';
+        list.push({ id: `m:${mill.id}`, x: m.x, y: m.y, angle: m.angle, inView: m.inView, cls,
+          label: `${mill.name.toUpperCase()} MILL · ${Math.round(dist * 3)} m`, owner });
+      }
+    }
+    this.instruments.updateEdgeMarkers(list);
+  }
+
   /** Floating name / distance / BOT tags over nearby planes */
   updateNameTags() {
     if (!this.instruments || !this.localPlayer) return;
@@ -4406,7 +4486,7 @@ class Game {
       const p = info[id];
       list.push({
         id, x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h,
-        name: p?.username || 'Pilot', dist: dist * 3,
+        name: p?.username || 'Pilot', dist: dist * 3, dy: (ship.position.y - me.position.y) * 3,
         team: p?.team || 'red', isBot: !!p?.isBot, sameTeam: p?.team === this.localPlayer.team,
       });
     }
@@ -4489,6 +4569,7 @@ class Game {
     });
 
     this.updateNameTags();
+    this.updateEdgeMarkers();
     this.updateEnvironment(delta);
 
     if (this.postfx) this.postfx.render();

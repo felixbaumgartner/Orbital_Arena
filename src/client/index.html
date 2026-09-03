@@ -366,7 +366,7 @@
         #radar {
             position: fixed;
             right: 1rem;
-            top: 10rem;
+            top: 9.4rem;
             border-radius: 50%;
             border: 2px solid rgba(0, 255, 100, 0.4);
             box-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
@@ -1173,6 +1173,40 @@
         #lead.locked { border-color: #ff4a3d; }
         #lead.locked::after { background: #ff4a3d; }
 
+        /* Edge-of-screen markers for planes and windmills out of view, and
+           floating labels over windmills in view */
+        #edge { position: fixed; top: 0; left: 0; pointer-events: none; z-index: 4; }
+
+        .edge-marker {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            white-space: nowrap;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+        }
+
+        .edge-marker .em-arrow {
+            width: 0;
+            height: 0;
+            margin: 0 auto 2px;
+            border-left: 7px solid transparent;
+            border-right: 7px solid transparent;
+            border-bottom: 13px solid currentColor;
+            filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
+        }
+
+        .edge-marker.inview .em-arrow { display: none; }
+        .edge-marker.inview { font-size: 0.72rem; opacity: 0.9; }
+        .edge-marker .em-label { color: #fff; }
+        .edge-marker.enemy { color: #ff5a5a; }
+        .edge-marker.mill-red { color: #ff7b7b; }
+        .edge-marker.mill-blue { color: #8fbbff; }
+        .edge-marker.mill-none { color: #e0e0e0; }
+        .edge-marker .em-owner { display: block; font-size: 0.6rem; letter-spacing: 0.15em; }
+
         /* Plane name tags */
         #tags { position: fixed; top: 0; left: 0; pointer-events: none; }
 
@@ -1583,6 +1617,7 @@
             <div class="crosshair"></div>
             <div id="damage-dir"></div>
             <div id="tags"></div>
+            <div id="edge"></div>
             <div id="lock">
                 <div class="lock-box"></div>
                 <div class="lock-info">
@@ -1601,7 +1636,7 @@
             <div id="kill-feed"></div>
             <div id="pullup">PULL UP</div>
 
-            <canvas id="radar" width="140" height="140"></canvas>
+            <canvas id="radar" width="160" height="160"></canvas>
 
             <div id="weather-indicator" class="glass">
                 <span id="env-clock">☀️ 08:30</span>

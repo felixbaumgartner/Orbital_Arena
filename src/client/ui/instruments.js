@@ -37,6 +37,8 @@ export class Instruments {
     this.medalEl = document.getElementById('medal');
     this.medalTimer = null;
     this.countdownEl = document.getElementById('match-countdown');
+    this.edge = document.getElementById('edge');
+    this.edgePool = new Map();
 
     this.bindSettingsPanel();
     this.applyFpsVisibility();
@@ -292,13 +294,49 @@ export class Instruments {
       const nameEl = el.firstChild;
       if (nameEl.textContent !== t.name) nameEl.textContent = t.name;
       el.children[1].style.display = t.isBot ? 'inline' : 'none';
-      el.children[2].textContent = `${Math.round(t.dist)} m`;
+      const vert = t.dy > 12 ? ' ▲' : t.dy < -12 ? ' ▼' : '';
+      el.children[2].textContent = `${Math.round(t.dist)} m${vert}`;
     }
     for (const [id, el] of this.tagPool) {
       if (!seen.has(id)) {
         el.remove();
         this.tagPool.delete(id);
       }
+    }
+  }
+
+  // --- Edge markers ----------------------------------------------------------------------------
+
+  /** list: [{ id, x, y, angle, inView, cls, label, owner }] */
+  updateEdgeMarkers(list) {
+    if (!this.edge) return;
+    const seen = new Set();
+    for (const m of list) {
+      seen.add(m.id);
+      let el = this.edgePool.get(m.id);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'edge-marker';
+        const arrow = document.createElement('div');
+        arrow.className = 'em-arrow';
+        const label = document.createElement('span');
+        label.className = 'em-label';
+        const owner = document.createElement('span');
+        owner.className = 'em-owner';
+        el.append(arrow, label, owner);
+        this.edge.appendChild(el);
+        this.edgePool.set(m.id, el);
+      }
+      el.className = `edge-marker ${m.cls}${m.inView ? ' inview' : ''}`;
+      el.style.left = `${m.x}px`;
+      el.style.top = `${m.y}px`;
+      el.children[0].style.transform = `rotate(${m.angle}rad)`;
+      if (el.children[1].textContent !== m.label) el.children[1].textContent = m.label;
+      const owner = m.owner || '';
+      if (el.children[2].textContent !== owner) el.children[2].textContent = owner;
+    }
+    for (const [id, el] of this.edgePool) {
+      if (!seen.has(id)) { el.remove(); this.edgePool.delete(id); }
     }
   }
 

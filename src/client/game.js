@@ -142,6 +142,23 @@ const PLAYER_COLORS = [
   0x00D4FF, 0xFF6B6B, 0x45B7D1, 0xFFA07A,
 ];
 
+// Cosmetic unlocks by pilot level (XP is banked per match)
+const PAINTS = {
+  classic:  { level: 1,  label: 'Classic',  body: null,     accent: null },
+  delft:    { level: 4,  label: 'Delft',    body: 0xF4F4F0, accent: 0x1F5FBF },
+  tulip:    { level: 7,  label: 'Tulip',    body: 0xE8384F, accent: 0xFFD23F },
+  midnight: { level: 10, label: 'Midnight', body: 0x1A1D2B, accent: 0x9FE1FF },
+  gold:     { level: 14, label: 'Gold',     body: 0xD4A017, accent: 0xFFF3C0 },
+};
+const TRAILS = {
+  white:  { level: 1,  label: 'White',  color: 0xFFFFFF },
+  tulip:  { level: 3,  label: 'Tulip',  color: 0xFF6B7A },
+  orange: { level: 5,  label: 'Orange', color: 0xFFA040 },
+  gold:   { level: 8,  label: 'Gold',   color: 0xFFD23F },
+  delft:  { level: 11, label: 'Delft',  color: 0x6FB3FF },
+};
+const STORK_LEVEL = 12;
+
 const CAPTURE_WINDMILLS = [
   { id: 'mill_n', x: 0, z: -300, name: 'North' },
   { id: 'mill_s', x: 0, z: 300, name: 'South' },
@@ -302,6 +319,8 @@ class Game {
     this.pendingMode = 'domination';
     this.pendingPlane = 'scout';
     this.planeClass = 'scout';
+    this.cosmetics = { paint: 'classic', trail: 'white', stork: false };
+    this.stork = null;
     this.planeStats = { maxHealth: 100, damage: 22, captureWeight: 1, speed: 1.05, turn: 1, vision: 1.6 };
     this.round = 1;
     this.roundWins = { red: 0, blue: 0 };
@@ -484,6 +503,7 @@ class Game {
       this.pendingMode = modeInput && modeInput.value === 'tdm' ? 'tdm' : 'domination';
       const planeInput = document.querySelector('input[name="plane"]:checked');
       this.pendingPlane = planeInput ? planeInput.value : 'scout';
+      this.cosmetics = this.readHangar();
       try {
         localStorage.setItem('dvf.name', username);
         localStorage.setItem('dvf.mode', this.pendingMode);
@@ -510,6 +530,7 @@ class Game {
         const xp = this.totalXp();
         rankEl.textContent = `Lv ${this.levelFor(xp)} · ${this.rankFor(xp)} · ${xp.toLocaleString()} XP`;
       }
+      this.setupHangar();
       if (localStorage.getItem('dvf.autoStart') === '1' && saved) {
         localStorage.removeItem('dvf.autoStart');
         setTimeout(start, 50);
@@ -1726,7 +1747,8 @@ class Game {
   // CONTRAILS & SMOKE TRAILS
   // =========================================================================
 
-  createTrail(playerId) {
+  createTrail(playerId, cosmetics = null) {
+    const trailColor = (cosmetics && TRAILS[cosmetics.trail]) ? TRAILS[cosmetics.trail].color : 0xffffff;
     const maxPoints = GAME_CONFIG.TRAIL_MAX_POINTS;
     const posArray = new Float32Array(maxPoints * 3);
     const geo = new THREE.BufferGeometry();
@@ -1734,7 +1756,7 @@ class Game {
     geo.setDrawRange(0, 0);
 
     const mat = new THREE.LineBasicMaterial({
-      color: 0xffffff, transparent: true, opacity: 0.3,
+      color: trailColor, transparent: true, opacity: trailColor === 0xffffff ? 0.3 : 0.55,
     });
 
     const line = new THREE.Line(geo, mat);
@@ -2412,7 +2434,11 @@ class Game {
     return PLAYER_COLORS[Math.abs(hash) % PLAYER_COLORS.length];
   }
 
-  createPlayerShip(color, plane = 'scout') {
+  createPlayerShip(color, plane = 'scout', cosmetics = null) {
+    // Paint schemes replace the body colour; the accent glows on the fins
+    const paint = cosmetics && PAINTS[cosmetics.paint];
+    if (paint && paint.body !== null) { color = paint.body; }
+    const accent = paint && paint.accent !== null ? paint.accent : color;
     const planeGroup = new THREE.Group();
     // Class silhouettes: the bomber is broad and heavy, the interceptor slim
     if (plane === 'bomber') planeGroup.scale.set(1.3, 1.15, 1.2);
@@ -2428,7 +2454,7 @@ class Game {
     });
     const chromeMat = new THREE.MeshStandardMaterial({ color: 0xEEEEEE, metalness: 0.95, roughness: 0.05 });
     const glowMat = new THREE.MeshStandardMaterial({
-      color, emissive: color, emissiveIntensity: 0.8, metalness: 0.5, roughness: 0.3,
+      color: accent, emissive: accent, emissiveIntensity: 0.8, metalness: 0.5, roughness: 0.3,
     });
 
     const fuselageGeo = new THREE.CylinderGeometry(0.5, 0.85, 10, 12);
@@ -2617,7 +2643,7 @@ class Game {
         console.log('Connected to server');
         this.isConnected = true;
         this.reconnectAttempts = 0;
-        this.socket.emit('joinGame', { username, mode: this.pendingMode, plane: this.pendingPlane });
+        this.socket.emit('joinGame', { username, mode: this.pendingMode, plane: this.pendingPlane, cosmetics: this.cosmetics });
       });
 
       this.socket.on('connect_error', (error) => {
@@ -2641,10 +2667,11 @@ class Game {
         this.syncTimer(data.gameState.timeRemaining);
 
         const myColor = this.getPlayerColor(data.player.id);
-        const ship = this.createPlayerShip(myColor, data.player.plane);
+        const ship = this.createPlayerShip(myColor, data.player.plane, data.player.cosmetics);
         this.scene.add(ship);
         this.players.set(this.localPlayer.id, ship);
-        this.createTrail(data.player.id);
+        this.createTrail(data.player.id, data.player.cosmetics);
+        if (data.player.cosmetics?.stork && this.levelFor(this.totalXp()) >= STORK_LEVEL) this.createStork();
         this.playerHealth = data.player.maxHealth || 100;
         this.setHealthBar(this.playerHealth);
 
@@ -2698,12 +2725,12 @@ class Game {
           data.gameState.players.forEach(player => {
             if (player.id !== this.localPlayer.id && !this.players.has(player.id)) {
               const otherColor = this.getPlayerColor(player.id);
-              const otherShip = this.createPlayerShip(otherColor, player.plane);
+              const otherShip = this.createPlayerShip(otherColor, player.plane, player.cosmetics);
               otherShip.position.copy(player.position);
               if (!player.position.y) otherShip.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
               this.scene.add(otherShip);
               this.players.set(player.id, otherShip);
-              this.createTrail(player.id);
+              this.createTrail(player.id, player.cosmetics);
             }
           });
         }
@@ -2722,12 +2749,12 @@ class Game {
       this.socket.on('playerJoined', (player) => {
         if (player && player.id && !this.players.has(player.id)) {
           const playerColor = this.getPlayerColor(player.id);
-          const ship = this.createPlayerShip(playerColor, player.plane);
+          const ship = this.createPlayerShip(playerColor, player.plane, player.cosmetics);
           ship.position.copy(player.position);
           if (!player.position.y) ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
           this.scene.add(ship);
           this.players.set(player.id, ship);
-          this.createTrail(player.id);
+          this.createTrail(player.id, player.cosmetics);
           if (this.gameState && this.gameState.players &&
               !this.gameState.players.some(p => p.id === player.id)) {
             this.gameState.players.push(player);
@@ -3650,8 +3677,9 @@ class Game {
     const xpEl = document.getElementById('end-xp');
     if (xpEl) {
       const lvBefore = this.levelFor(before), lvAfter = this.levelFor(after);
+      const unlocked = this.unlocksBetween(lvBefore, lvAfter);
       xpEl.textContent = `+${this.sessionXp.toLocaleString()} XP · Lv ${lvAfter} ${this.rankFor(after)} (${after.toLocaleString()} XP)` +
-        (lvAfter > lvBefore ? ' · LEVEL UP!' : '');
+        (lvAfter > lvBefore ? ' · LEVEL UP!' : '') + (unlocked.length ? ` · Unlocked: ${unlocked.join(', ')}` : '');
     }
     const medalsEl = document.getElementById('end-medals');
     if (medalsEl) {
@@ -4784,6 +4812,114 @@ class Game {
     }
   }
 
+  /** Fills the login-screen hangar with what this pilot has unlocked */
+  setupHangar() {
+    const level = this.levelFor(this.totalXp());
+    let saved = { paint: 'classic', trail: 'white', stork: false };
+    try { saved = { ...saved, ...JSON.parse(localStorage.getItem('dvf.cosmetics') || '{}') }; } catch (e) { /* ignore */ }
+    const fill = (id, table, chosen) => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      sel.textContent = '';
+      for (const [key, item] of Object.entries(table)) {
+        const opt = document.createElement('option');
+        opt.value = key;
+        const locked = level < item.level;
+        opt.textContent = locked ? `${item.label} (Lv ${item.level})` : item.label;
+        opt.disabled = locked;
+        if (key === chosen && !locked) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    };
+    fill('set-paint', PAINTS, saved.paint);
+    fill('set-trail', TRAILS, saved.trail);
+    const stork = document.getElementById('set-stork');
+    const storkLabel = document.getElementById('stork-label');
+    if (stork) {
+      const locked = level < STORK_LEVEL;
+      stork.disabled = locked;
+      stork.checked = !locked && !!saved.stork;
+      if (storkLabel) {
+        storkLabel.classList.toggle('locked', locked);
+        storkLabel.lastChild.textContent = locked ? ` Stork wingman (Lv ${STORK_LEVEL})` : ' Stork wingman';
+      }
+    }
+  }
+
+  readHangar() {
+    const c = {
+      paint: document.getElementById('set-paint')?.value || 'classic',
+      trail: document.getElementById('set-trail')?.value || 'white',
+      stork: !!document.getElementById('set-stork')?.checked,
+    };
+    try { localStorage.setItem('dvf.cosmetics', JSON.stringify(c)); } catch (e) { /* ignore */ }
+    return c;
+  }
+
+  /** Names of everything that unlocks between two levels */
+  unlocksBetween(lvA, lvB) {
+    const out = [];
+    for (const [, p] of Object.entries(PAINTS)) if (p.level > lvA && p.level <= lvB) out.push(`${p.label} paint`);
+    for (const [, t] of Object.entries(TRAILS)) if (t.level > lvA && t.level <= lvB) out.push(`${t.label} contrail`);
+    if (STORK_LEVEL > lvA && STORK_LEVEL <= lvB) out.push('Stork wingman');
+    return out;
+  }
+
+  /** A white stork that flies on your wing (a level-12 reward; seen by you) */
+  createStork() {
+    const g = new THREE.Group();
+    const white = new THREE.MeshStandardMaterial({ color: 0xF7F7F2, roughness: 0.8 });
+    const black = new THREE.MeshStandardMaterial({ color: 0x1B1B1B, roughness: 0.8, side: THREE.DoubleSide });
+    const orange = new THREE.MeshStandardMaterial({ color: 0xE8642A, roughness: 0.6 });
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 6), white);
+    body.scale.set(1, 0.8, 1.8);
+    g.add(body);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 2.2, 6), white);
+    neck.rotation.x = Math.PI / 2 - 0.5; neck.position.set(0, 0.4, -2.0);
+    g.add(neck);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 7, 6), white);
+    head.position.set(0, 0.95, -2.9);
+    g.add(head);
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.16, 1.6, 6), orange);
+    beak.rotation.x = -Math.PI / 2; beak.position.set(0, 0.9, -3.9);
+    g.add(beak);
+    for (const side of [-1, 1]) {
+      const wing = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1.1), white);
+      wing.rotation.x = -Math.PI / 2; wing.position.set(side * 2.3, 0.3, 0);
+      g.add(wing);
+      const tip = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.0), black);
+      tip.rotation.x = -Math.PI / 2; tip.position.set(side * 4.7, 0.3, 0.05);
+      g.add(tip);
+      g.userData[side < 0 ? 'lw' : 'rw'] = [wing, tip];
+    }
+    const legs = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.6, 4), orange);
+    legs.rotation.x = Math.PI / 2 + 0.3; legs.position.set(0, -0.3, 1.9);
+    g.add(legs);
+    g.traverse(c => { if (c.isMesh) c.castShadow = true; });
+    this.scene.add(g);
+    this.stork = g;
+  }
+
+  updateStork(delta) {
+    if (!this.stork || !this.localPlayer) return;
+    const ship = this.players.get(this.localPlayer.id);
+    if (!ship) return;
+    // Formation slot: left, slightly behind and above, with a lazy follow
+    const back = 9, side = -11, up = 3.5;
+    const tx = ship.position.x + Math.sin(this.shipRotation) * back + Math.cos(this.shipRotation) * side;
+    const tz = ship.position.z + Math.cos(this.shipRotation) * back - Math.sin(this.shipRotation) * side;
+    const ty = ship.position.y + up + Math.sin(this.animationTime * 1.7) * 0.8;
+    const k = Math.min(1, delta * 2.2);
+    this.stork.position.x += (tx - this.stork.position.x) * k;
+    this.stork.position.y += (ty - this.stork.position.y) * k;
+    this.stork.position.z += (tz - this.stork.position.z) * k;
+    this.stork.rotation.y = this.shipRotation;
+    const flap = Math.sin(this.animationTime * 6) * 0.45;
+    for (const m of this.stork.userData.lw || []) m.rotation.z = flap;
+    for (const m of this.stork.userData.rw || []) m.rotation.z = -flap;
+    this.stork.visible = ship.visible && !this.dead;
+  }
+
   totalXp() {
     try { return parseInt(localStorage.getItem('dvf.xp') || '0', 10) || 0; } catch (e) { return 0; }
   }
@@ -5137,6 +5273,7 @@ class Game {
 
     this.updateNameTags();
     this.updateEdgeMarkers();
+    this.updateStork(delta);
     this.updateEnvironment(delta);
 
     if (this.postfx) this.postfx.render();

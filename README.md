@@ -19,6 +19,10 @@ A multiplayer flight-combat game over an endless, living Dutch landscape: tulip 
 - Killstreak rewards: radar sweep at 3, wingman escort at 5, airstrike at 7
 - Lead indicator, target lock bracket with health, magnetic aim assist and bright tracers
 - Mobile web: floating thumbstick, FIRE / BOOST / ROLL buttons, compact landscape HUD, Low quality by default
+- Three plane classes (Interceptor, Bomber, Scout), best-of-three rounds with intermission and sudden death, low-pass captures, respawn at your longest-held windmill
+- Energy flight model (dive to gain speed, climb and turn to lose it, stalls), propeller and wind audio, church bells on captures
+- A bounded arena inside a dike: the Great Canal, a cathedral spire, a six-turbine gauntlet, coastal lighthouses; the world affects combat (treeline stealth, storms and night change vision)
+- Cosmetic unlocks by level: paint schemes, contrail colours and a stork wingman
 
 ## Getting Started
 

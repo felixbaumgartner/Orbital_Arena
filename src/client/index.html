@@ -191,6 +191,42 @@
         .mode-card .mode-title { display: block; font-weight: 700; font-size: 0.95rem; letter-spacing: 0.05em; }
         .mode-card .mode-sub { display: block; font-size: 0.75rem; color: #b0bec5; margin-top: 0.15rem; }
 
+        #plane-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 0.9rem; }
+        .plane-card {
+            display: block; padding: 0.55rem 0.6rem; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05); cursor: pointer; text-align: left; transition: border-color 0.15s, background 0.15s;
+        }
+        .plane-card input { display: none; }
+        .plane-card:has(input:checked) { border-color: var(--green); background: rgba(76, 175, 80, 0.14); }
+        .plane-card .plane-title { display: block; font-weight: 700; font-size: 0.9rem; letter-spacing: 0.05em; }
+        .plane-card .plane-sub { display: block; font-size: 0.68rem; color: #b0bec5; margin-top: 0.1rem; min-height: 2.4em; }
+        .plane-card .plane-stats { display: block; margin-top: 0.35rem; }
+        .plane-card .plane-stats i { display: block; height: 3px; margin-top: 3px; border-radius: 2px; background: var(--accent); opacity: 0.85; }
+        .plane-card .plane-stats i:nth-child(2) { background: #ff6b6b; }
+        .plane-card .plane-stats i:nth-child(3) { background: #7fb2ff; }
+        body.touch #plane-picker { gap: 0.35rem; }
+        body.touch .plane-card .plane-sub { display: none; }
+
+        /* Round intermission card */
+        #intermission {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: min(92vw, 460px); padding: 1.4rem 1.8rem; display: none; z-index: 1080; text-align: center;
+            background: rgba(8, 14, 20, 0.92);
+        }
+        #intermission.show { display: block; }
+        #intermission .im-round { font-size: 0.75rem; letter-spacing: 0.3em; text-transform: uppercase; color: #90a4ae; }
+        #intermission .im-title { font-size: 2rem; font-weight: 700; letter-spacing: 0.15em; margin: 0.2rem 0; }
+        #intermission .im-title.red { color: var(--red); }
+        #intermission .im-title.blue { color: var(--blue); }
+        #intermission .im-score { font-size: 1.2rem; margin-bottom: 0.4rem; }
+        #intermission .im-wins { display: flex; justify-content: center; gap: 0.5rem; font-size: 1.4rem; margin: 0.3rem 0 0.6rem; letter-spacing: 0.2em; }
+        #intermission .im-wins .red { color: var(--red); }
+        #intermission .im-wins .blue { color: var(--blue); }
+        #intermission .im-mvp { color: var(--accent); font-weight: 700; margin-bottom: 0.5rem; }
+        #intermission .im-next { color: #cfd8dc; font-size: 0.95rem; }
+        #intermission .im-next b { color: var(--accent); }
+        #intermission .im-sudden { margin-top: 0.5rem; color: #ff8a80; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; font-size: 0.8rem; }
+
         /* Score popups next to the crosshair */
         #popups {
             position: fixed;
@@ -1805,6 +1841,26 @@
                         <span class="mode-sub">First team to 30 kills. Nothing else matters.</span>
                     </label>
                 </div>
+                <div id="plane-picker">
+                    <label class="plane-card">
+                        <input type="radio" name="plane" value="interceptor">
+                        <span class="plane-title">Interceptor</span>
+                        <span class="plane-sub">Fast and nimble. Light guns, thin skin.</span>
+                        <span class="plane-stats"><i style="width:90%"></i><i style="width:40%"></i><i style="width:45%"></i></span>
+                    </label>
+                    <label class="plane-card">
+                        <input type="radio" name="plane" value="bomber">
+                        <span class="plane-title">Bomber</span>
+                        <span class="plane-sub">Tough, hits hard, captures fast. Turns like a bus.</span>
+                        <span class="plane-stats"><i style="width:35%"></i><i style="width:95%"></i><i style="width:90%"></i></span>
+                    </label>
+                    <label class="plane-card">
+                        <input type="radio" name="plane" value="scout" checked>
+                        <span class="plane-title">Scout</span>
+                        <span class="plane-sub">Sees further, spots hidden planes. Balanced.</span>
+                        <span class="plane-stats"><i style="width:65%"></i><i style="width:60%"></i><i style="width:60%"></i></span>
+                    </label>
+                </div>
                 <input type="text" id="username-input" placeholder="Enter pilot name" maxlength="15" autocomplete="off">
                 <button id="start-button">Take Flight</button>
                 <div id="login-hint">
@@ -1971,6 +2027,16 @@
             <div class="rotate-title">Turn your phone sideways</div>
             <div class="rotate-sub">The cockpit is built for landscape. You can still play like this if you prefer.</div>
             <button id="rotate-dismiss">Play anyway</button>
+        </div>
+
+        <div id="intermission" class="glass">
+            <div class="im-round">Round 1 of 3</div>
+            <div class="im-title">RED WINS</div>
+            <div class="im-score"></div>
+            <div class="im-wins"></div>
+            <div class="im-mvp"></div>
+            <div class="im-next"></div>
+            <div class="im-sudden"></div>
         </div>
 
         <div id="match-countdown"><div class="cd-label">MATCH STARTS IN</div><div class="cd-num">5</div></div>

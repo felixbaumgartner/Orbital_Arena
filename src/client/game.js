@@ -286,6 +286,12 @@ class Game {
     // Match mode, countdown, score popups, medals, streaks, XP
     this.mode = 'domination';
     this.pendingMode = 'domination';
+    this.pendingPlane = 'scout';
+    this.planeClass = 'scout';
+    this.planeStats = { maxHealth: 100, damage: 22, captureWeight: 1, speed: 1.05, turn: 1, vision: 1.6 };
+    this.round = 1;
+    this.roundWins = { red: 0, blue: 0 };
+    this.suddenDeath = false;
     this.countdownEndsAt = 0;
     this.countdownLast = null;
     this.sessionXp = 0;
@@ -456,9 +462,12 @@ class Game {
       }
       const modeInput = document.querySelector('input[name="mode"]:checked');
       this.pendingMode = modeInput && modeInput.value === 'tdm' ? 'tdm' : 'domination';
+      const planeInput = document.querySelector('input[name="plane"]:checked');
+      this.pendingPlane = planeInput ? planeInput.value : 'scout';
       try {
         localStorage.setItem('dvf.name', username);
         localStorage.setItem('dvf.mode', this.pendingMode);
+        localStorage.setItem('dvf.plane', this.pendingPlane);
       } catch (e) { /* ignore */ }
       this.connectToServer(username);
       loginScreen.style.display = 'none';
@@ -473,6 +482,9 @@ class Game {
       const savedMode = localStorage.getItem('dvf.mode');
       const modeRadio = document.querySelector(`input[name="mode"][value="${savedMode === 'tdm' ? 'tdm' : 'domination'}"]`);
       if (modeRadio) modeRadio.checked = true;
+      const savedPlane = localStorage.getItem('dvf.plane');
+      const planeRadio = savedPlane && document.querySelector(`input[name="plane"][value="${savedPlane}"]`);
+      if (planeRadio) planeRadio.checked = true;
       const rankEl = document.getElementById('login-rank');
       if (rankEl) {
         const xp = this.totalXp();
@@ -2017,9 +2029,10 @@ class Game {
       if (captureLabel) {
         const st = this.windmillStates[nearestMill.config.id];
         const mine = st?.team === this.localPlayer?.team;
+        const low = ship && ship.position.y < (this.rules.lowPassAltitude || 24);
         captureLabel.textContent = mine
           ? `Holding ${nearestMill.config.name} mill · stay inside to defend`
-          : `Capturing ${nearestMill.config.name} mill · stay inside the circle`;
+          : `Capturing ${nearestMill.config.name} mill${low ? ' · LOW PASS ×2' : ' · fly low to capture faster'}`;
       }
       const serverState = this.windmillStates[nearestMill.config.id];
       const prog = serverState ? (serverState.progress || 0) : 0;
@@ -2273,8 +2286,12 @@ class Game {
     return PLAYER_COLORS[Math.abs(hash) % PLAYER_COLORS.length];
   }
 
-  createPlayerShip(color) {
+  createPlayerShip(color, plane = 'scout') {
     const planeGroup = new THREE.Group();
+    // Class silhouettes: the bomber is broad and heavy, the interceptor slim
+    if (plane === 'bomber') planeGroup.scale.set(1.3, 1.15, 1.2);
+    else if (plane === 'interceptor') planeGroup.scale.set(0.85, 0.9, 1.05);
+    planeGroup.userData.plane = plane;
     // Heading first, then pitch about the nose axis, then bank — the default
     // XYZ order pitched about the WORLD x axis, which rolled the plane
     // sideways whenever it wasn't flying due north
@@ -2474,7 +2491,7 @@ class Game {
         console.log('Connected to server');
         this.isConnected = true;
         this.reconnectAttempts = 0;
-        this.socket.emit('joinGame', { username, mode: this.pendingMode });
+        this.socket.emit('joinGame', { username, mode: this.pendingMode, plane: this.pendingPlane });
       });
 
       this.socket.on('connect_error', (error) => {
@@ -2498,14 +2515,21 @@ class Game {
         this.syncTimer(data.gameState.timeRemaining);
 
         const myColor = this.getPlayerColor(data.player.id);
-        const ship = this.createPlayerShip(myColor);
+        const ship = this.createPlayerShip(myColor, data.player.plane);
         this.scene.add(ship);
         this.players.set(this.localPlayer.id, ship);
         this.createTrail(data.player.id);
-        this.playerHealth = 100;
+        this.playerHealth = data.player.maxHealth || 100;
+        this.setHealthBar(this.playerHealth);
 
         if (data.gameState.rules) this.rules = { ...this.rules, ...data.gameState.rules };
         this.mode = data.gameState.mode === 'tdm' ? 'tdm' : 'domination';
+        this.planeClass = data.player.plane || 'scout';
+        if (this.rules.planes && this.rules.planes[this.planeClass]) this.planeStats = this.rules.planes[this.planeClass];
+        this.playerMaxHealth = data.player.maxHealth || this.planeStats.maxHealth || 100;
+        this.round = data.gameState.round || 1;
+        this.roundWins = data.gameState.roundWins || { red: 0, blue: 0 };
+        this.suddenDeath = !!data.gameState.suddenDeath;
         this.applyModeHud();
 
         // Pre-match countdown: the server's clock is still ahead of "now"
@@ -2548,7 +2572,7 @@ class Game {
           data.gameState.players.forEach(player => {
             if (player.id !== this.localPlayer.id && !this.players.has(player.id)) {
               const otherColor = this.getPlayerColor(player.id);
-              const otherShip = this.createPlayerShip(otherColor);
+              const otherShip = this.createPlayerShip(otherColor, player.plane);
               otherShip.position.copy(player.position);
               if (!player.position.y) otherShip.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
               this.scene.add(otherShip);
@@ -2572,7 +2596,7 @@ class Game {
       this.socket.on('playerJoined', (player) => {
         if (player && player.id && !this.players.has(player.id)) {
           const playerColor = this.getPlayerColor(player.id);
-          const ship = this.createPlayerShip(playerColor);
+          const ship = this.createPlayerShip(playerColor, player.plane);
           ship.position.copy(player.position);
           if (!player.position.y) ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
           this.scene.add(ship);
@@ -2795,6 +2819,30 @@ class Game {
             this.windmillStates[mill.id] = mill;
           }
         }
+      });
+
+      // Rounds: intermission card, then a fresh countdown
+      this.socket.on('roundEnd', (d) => {
+        if (!d) return;
+        this.roundWins = d.roundWins || this.roundWins;
+        if (!d.final) this.showIntermission(d);
+        this.controls.shooting = false;
+      });
+      this.socket.on('roundStart', (d) => {
+        if (!d) return;
+        this.round = d.round;
+        this.roundWins = d.roundWins || this.roundWins;
+        this.suddenDeath = !!d.suddenDeath;
+        this.hideIntermission();
+        this.calloutsDone.clear();
+        this.countdownEndsAt = performance.now() + (d.countdown || 5000);
+        this.windmillStates = {};
+        for (const mill of CAPTURE_WINDMILLS) this.windmillStates[mill.id] = { id: mill.id, team: null, progress: 0 };
+        if (this.gameState) this.gameState.scores = { red: 0, blue: 0 };
+        this.updateHUD();
+        this.applyModeHud();
+        this.instruments.toast(this.suddenDeath ? '🔥' : '🏁', `Round ${d.round} of ${d.maxRounds}`,
+          this.suddenDeath ? 'SUDDEN DEATH · windmills score double' : 'Fresh windmills, fresh scores');
       });
 
       // Killstreak rewards
@@ -3269,7 +3317,8 @@ class Game {
   setHealthBar(health) {
     const healthFill = document.querySelector('.health-fill');
     if (!healthFill) return;
-    healthFill.style.width = `${Math.max(0, Math.min(100, health))}%`;
+    const max = this.playerMaxHealth || 100;
+    healthFill.style.width = `${Math.max(0, Math.min(100, (health / max) * 100))}%`;
   }
 
   handleLocalDeath(attackerName) {
@@ -3357,7 +3406,9 @@ class Game {
     const overlay = document.getElementById('end-screen');
     if (!overlay || !this.gameState) return;
 
-    const scores = this.gameState.scores || { red: 0, blue: 0 };
+    this.hideIntermission();
+    const rw = this.gameState.roundWins || this.roundWins || { red: 0, blue: 0 };
+    const scores = { red: rw.red, blue: rw.blue };
     const winner = scores.red > scores.blue ? 'red' : scores.blue > scores.red ? 'blue' : null;
     const myTeam = this.localPlayer?.team;
 
@@ -3374,7 +3425,7 @@ class Game {
 
     const scoreEl = document.getElementById('end-score');
     if (scoreEl) scoreEl.innerHTML =
-      `<span class="red">RED ${scores.red}</span> &mdash; <span class="blue">${scores.blue} BLUE</span>`;
+      `<span class="red">RED ${scores.red}</span> &mdash; <span class="blue">${scores.blue} BLUE</span> <span style="font-size:0.7em;color:#90a4ae">rounds</span>`;
 
     const statsEl = document.getElementById('end-stats');
     if (statsEl && this.localPlayer) {
@@ -3386,10 +3437,9 @@ class Game {
     if (reasonEl) {
       const target = this.rules.tdmTarget || 30;
       const winName = winner ? winner.toUpperCase() : '';
-      reasonEl.textContent = this.gameState.endReason === 'target'
-        ? `${winName} reached ${target} kills`
-        : this.mode === 'tdm' ? `Time's up · ${winner ? winName + ' had more kills' : 'kills level'}`
-        : `Time's up · ${winner ? winName + ' held the windmills longer' : 'nobody pulled ahead'}`;
+      reasonEl.textContent = winner
+        ? `${winName} took the match ${scores.red}–${scores.blue} in rounds`
+        : 'Rounds split evenly · a draw';
     }
     const mvpEl = document.getElementById('end-mvp');
     const mvp = this.gameState.mvp;
@@ -3567,7 +3617,7 @@ class Game {
       this.throttle = Math.max(GAME_CONFIG.THROTTLE_MIN, this.throttle - GAME_CONFIG.THROTTLE_RATE * delta);
     }
 
-    let speed = GAME_CONFIG.MOVEMENT_SPEED * this.throttle;
+    let speed = GAME_CONFIG.MOVEMENT_SPEED * this.throttle * (this.planeStats.speed || 1);
     if (this.controls.boost && this.localPlayer.energy > 0) {
       speed = GAME_CONFIG.BOOST_SPEED;
       this.localPlayer.energy = Math.max(0, this.localPlayer.energy - (GAME_CONFIG.ENERGY_DRAIN_RATE * delta));
@@ -3589,7 +3639,7 @@ class Game {
 
     // Banked turning (A/D): turn rate eases toward the input
     const turnInput = Math.max(-1, Math.min(1, (this.controls.left ? 1 : 0) - (this.controls.right ? 1 : 0) + mouseTurn));
-    const targetTurnRate = turnInput * GAME_CONFIG.TURN_RATE;
+    const targetTurnRate = turnInput * GAME_CONFIG.TURN_RATE * (this.planeStats.turn || 1);
     const turnSmooth = Math.min(1, GAME_CONFIG.TURN_SMOOTHING * delta);
     this.rotationVelocity += (targetTurnRate - this.rotationVelocity) * turnSmooth;
     this.shipRotation += this.rotationVelocity * delta;
@@ -4354,6 +4404,45 @@ class Game {
     });
   }
 
+  showIntermission(d) {
+    const el = document.getElementById('intermission');
+    if (!el) return;
+    const winName = d.winner ? d.winner.toUpperCase() : null;
+    el.querySelector('.im-round').textContent = `Round ${d.round} of ${this.rules.maxRounds || 3}`;
+    const title = el.querySelector('.im-title');
+    title.textContent = winName ? `${winName} WINS THE ROUND` : 'ROUND DRAWN';
+    title.className = `im-title ${d.winner || ''}`;
+    el.querySelector('.im-score').textContent = `${d.scores.red} – ${d.scores.blue}`;
+    const wins = el.querySelector('.im-wins');
+    wins.textContent = '';
+    const r = document.createElement('span'); r.className = 'red'; r.textContent = 'RED ' + '●'.repeat(d.roundWins.red) + '○'.repeat(Math.max(0, (this.rules.roundsToWin || 2) - d.roundWins.red));
+    const b = document.createElement('span'); b.className = 'blue'; b.textContent = '○'.repeat(Math.max(0, (this.rules.roundsToWin || 2) - d.roundWins.blue)) + '●'.repeat(d.roundWins.blue) + ' BLUE';
+    wins.append(r, b);
+    el.querySelector('.im-mvp').textContent = d.mvp ? `Round MVP: ${d.mvp.username}${d.mvp.isBot ? ' (BOT)' : ''} · ${d.mvp.kills} kills` : '';
+    el.querySelector('.im-sudden').textContent = d.nextSuddenDeath ? 'Next: sudden death · windmills score double' : '';
+    el.classList.add('show');
+    this.intermissionEndsAt = performance.now() + (d.intermission || 15000);
+    clearInterval(this.intermissionTicker);
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((this.intermissionEndsAt - performance.now()) / 1000));
+      const next = el.querySelector('.im-next');
+      next.textContent = '';
+      next.append('Next round in ');
+      const bEl = document.createElement('b'); bEl.textContent = `${left}s`;
+      next.append(bEl);
+      if (left <= 0) clearInterval(this.intermissionTicker);
+    };
+    tick();
+    this.intermissionTicker = setInterval(tick, 250);
+    this.playSound('medal');
+  }
+
+  hideIntermission() {
+    clearInterval(this.intermissionTicker);
+    const el = document.getElementById('intermission');
+    if (el) el.classList.remove('show');
+  }
+
   /** Mode-specific HUD: TDM hides the windmill machinery */
   applyModeHud() {
     const tdm = this.mode === 'tdm';
@@ -4361,7 +4450,8 @@ class Game {
     if (dots) dots.style.display = tdm ? 'none' : '';
     for (const [, mill] of this.captureWindmills) mill.group.visible = !tdm;
     const target = this.rules.tdmTarget || 30;
-    this.instruments.setModeCaption(tdm ? `Team Deathmatch · first to ${target}` : 'Windmill Domination · team score', this.localPlayer?.team);
+    const roundTag = `Round ${this.round} of ${this.rules.maxRounds || 3} · ${this.roundWins.red}–${this.roundWins.blue}${this.suddenDeath ? ' · sudden death' : ''}`;
+    this.instruments.setModeCaption(tdm ? `Team Deathmatch · first to ${target} · ${roundTag}` : `Windmill Domination · ${roundTag}`, this.localPlayer?.team);
   }
 
   /** Spawn already flying, pointed at something worth doing */

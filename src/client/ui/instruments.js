@@ -216,7 +216,7 @@ export class Instruments {
     const cap = document.querySelector('.score-caption');
     if (!cap) return;
     cap.textContent = '';
-    cap.appendChild(document.createTextNode(`${prefix} · you are `));
+    cap.appendChild(document.createTextNode(`${prefix} · you fly for `));
     const span = document.createElement('span');
     span.id = 'my-team';
     span.textContent = (team || '').toUpperCase();
@@ -421,7 +421,7 @@ export class Instruments {
         name.appendChild(chip);
       }
       const team = document.createElement('td');
-      team.textContent = r.team.toUpperCase();
+      team.textContent = r.team === 'red' ? 'OOSTWIJK' : r.team === 'blue' ? 'WESTERHAVEN' : '';
       const k = document.createElement('td');
       k.className = 'num';
       k.textContent = r.kills;

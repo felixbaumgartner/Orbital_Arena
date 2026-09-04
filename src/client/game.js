@@ -11,6 +11,7 @@ import {
 import { PostFX } from './postfx.js';
 import { Instruments } from './ui/instruments.js';
 import { TouchControls } from './ui/touch.js';
+import { Chatter, TEAMS } from './ui/chatter.js';
 
 // Game constants
 const GAME_CONFIG = {
@@ -321,6 +322,11 @@ class Game {
     this.planeClass = 'scout';
     this.cosmetics = { paint: 'classic', trail: 'white', stork: false };
     this.stork = null;
+
+    // Story: radio chatter, lore already told
+    this.chatter = null;
+    this.millLoreSeen = new Set();
+    this.nightTold = false;
     this.planeStats = { maxHealth: 100, damage: 22, captureWeight: 1, speed: 1.05, turn: 1, vision: 1.6 };
     this.round = 1;
     this.roundWins = { red: 0, blue: 0 };
@@ -426,6 +432,7 @@ class Game {
     });
     this.postfx = new PostFX(this.renderer, this.scene, this.camera);
     this.applySettings(this.instruments.settings);
+    this.chatter = new Chatter((n) => this.playSound(n));
 
     this.setupUI();
     this.animate();
@@ -725,6 +732,8 @@ class Game {
     const objs = [], cols = [];
     this.addLighthouse(0, -(R - 30), 'static', objs, cols);
     this.addLighthouse(0, R - 30, 'static', objs, cols);
+    this.registerLandmark('static', 0, -(R - 30), '🗼', 'The North Light', 'The keeper judges the Cup from up there. She has never been wrong, she says.');
+    this.registerLandmark('static', 0, R - 30, '🗼', 'The South Light', 'Where the first race was flown in 1935, in a plane made of bicycle parts.');
     this.staticColliders = cols;
     this.obstacles.set('static', this.staticColliders);
   }
@@ -769,7 +778,7 @@ class Game {
     batch.add('glow', { geo: new THREE.SphereGeometry(1.2, 8, 6), x: cx, y: 63, z: cz - 26 });
     cols.push({ x: cx, z: cz, radius: 24, topY: 28 });
     cols.push({ x: cx, z: cz - 26, radius: 6, topY: 64 });
-    this.registerLandmark('static', cx, cz, '⛪', 'The Cathedral', 'Steer by the spire');
+    this.registerLandmark('static', cx, cz, '⛪', 'The Cathedral', 'Its bell was cast from a windmill\'s old gears. It rings when the Cup is decided.');
 
     // Wind farm shortcut: six turbines on the line from East mill to Hill mill
     for (let i = 0; i < 6; i++) {
@@ -781,7 +790,7 @@ class Game {
       cols.push(tb.collider);
       this.registerAmbient('static', { mesh: tb.rotor, type: 'turbine' });
     }
-    this.registerLandmark('static', 250, -100, '🌬️', 'The Gauntlet', 'Six turbines between East and Hill');
+    this.registerLandmark('static', 250, -100, '🌬️', 'The Gauntlet', 'Built on the old racecourse. The fast line to Hill mill, if your nerve holds.');
 
     for (const mesh of batch.build(this.mats)) this.scene.add(mesh);
   }
@@ -1164,16 +1173,16 @@ class Game {
     const landmarkRoll = (coastal || canalColumn) ? 1 : rnd(4242);
     if (landmarkRoll < 0.025) {
       this.addCastle(baseX + CS / 2, baseZ + CS / 2, objects, colliders);
-      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🏰', 'Castle', 'A medieval stronghold');
+      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🏰', 'Slot Zonneveld', 'The count who built it lost the first Cup and never flew again.');
     } else if (landmarkRoll < 0.05) {
       this.addLighthouse(baseX + CS / 2, baseZ + CS / 2, chunkKey, objects, colliders);
-      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🗼', 'Lighthouse', 'Guiding ships on the lake');
+      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🗼', 'Lake Light', 'Lit every night since the Cup began, in case a pilot goes down in the lake.');
     } else if (landmarkRoll < 0.07) {
       for (let i = 0; i < 4; i++) {
         const s = seed + 4300 + i * 31;
         this.addHotAirBalloon(baseX + 40 + this.seededRandom(s) * (CS - 80), baseZ + 40 + this.seededRandom(s + 1) * (CS - 80), s + 2, chunkKey, objects);
       }
-      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🎈', 'Balloon Festival', 'Balloons fill the sky');
+      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🎈', 'Balloon Festival', 'The balloonists claim they invented the Cup. Nobody has ever let them compete.');
     }
 
     // --- Magic tulip power-up (any biome) ---
@@ -1230,7 +1239,7 @@ class Game {
       colliders.push(t.collider);
       this.registerAmbient(chunkKey, { mesh: t.rotor, type: 'turbine' });
     }
-    this.registerLandmark(chunkKey, sx + Math.cos(dir) * 55, sz + Math.sin(dir) * 55, '🌬️', 'Wind Farm', 'Turbines harvesting the polder wind');
+    this.registerLandmark(chunkKey, sx + Math.cos(dir) * 55, sz + Math.sin(dir) * 55, '🌬️', 'Wind Farm', 'Westerhaven money. Oostwijk says it spoils the view; Oostwijk flies through it anyway.');
   }
 
   registerLandmark(chunkKey, x, z, icon, name, subtitle) {
@@ -1960,6 +1969,10 @@ class Game {
         ws.timer = 0;
         ws.index = (ws.index + 1) % this.weatherCycle.length;
         ws.next = this.weatherCycle[ws.index];
+        if (ws.next === 'rainy' && this.localPlayer) {
+          this.instruments.toast('🌧️', 'A storm is coming in off the sea', 'Radar and vision shrink for everyone');
+          setTimeout(() => this.radio(null, 'storm'), 2500);
+        }
       }
     } else {
       ws.progress = Math.min(1, ws.timer / GAME_CONFIG.WEATHER_TRANSITION_DURATION);
@@ -2172,6 +2185,17 @@ class Game {
     const captureLabel = document.getElementById('capture-label');
     const captureFill = document.getElementById('capture-fill');
 
+    if (nearestMill && !this.millLoreSeen.has(nearestMill.config.id) && this.controlsEnabled) {
+      this.millLoreSeen.add(nearestMill.config.id);
+      const lore = {
+        mill_n: ['North Mill', 'The oldest of the five. Its sails have not stopped since 1741.'],
+        mill_s: ['South Mill', 'Rebuilt after the great storm. The miller still blames Westerhaven.'],
+        mill_e: ['East Mill', 'Closest to the harbour. Westerhaven calls it theirs. Oostwijk disagrees, loudly.'],
+        mill_w: ['West Mill', 'Grinds the flour for the midsummer feast. Whoever holds it at the last light wins the year.'],
+        mill_c: ['Hill Mill', 'On the only hill in the polder. You can see all four others from the cap.'],
+      }[nearestMill.config.id];
+      if (lore) this.instruments.toast('🌾', lore[0], lore[1]);
+    }
     if (nearestMill && captureUI) {
       captureUI.style.display = 'block';
       if (captureLabel) {
@@ -2697,6 +2721,7 @@ class Game {
           const m = Math.floor(rem / 60000), sec = Math.floor((rem % 60000) / 1000);
           this.instruments.toast('⏱️', 'Match in progress', `${m}:${sec.toString().padStart(2, '0')} left — jump in!`);
         }
+        setTimeout(() => this.radio(this.localPlayer?.team, 'hello', null, true), 9000);
         setTimeout(() => this.instruments.toast('🏆', 'How to score', this.mode === 'tdm'
           ? `Team Deathmatch · every shoot-down counts · first to ${this.rules.tdmTarget || 30} wins`
           : `Hold windmills: +1 every ${this.rules.millTickSeconds}s each · Shoot down a plane: +${this.rules.killScore}`), 4000);
@@ -2841,6 +2866,14 @@ class Game {
           victimShip.visible = false;
         }
 
+        // Radio: the cast reacts to kills involving you
+        if (data.killed) {
+          const att = this.gameState?.players?.find(p => p.id === data.attackerId);
+          const vic = this.gameState?.players?.find(p => p.id === data.targetId);
+          if (data.targetId === this.localPlayer?.id && att?.isBot) this.radio(att.team, 'killedYou', att.username);
+          else if (data.attackerId === this.localPlayer?.id && vic?.isBot) this.radio(vic.team, 'youKilledThem', vic.username);
+        }
+
         // Shooter feedback: hitmarker + confirm sound, banner on kill
         if (data.attackerId === this.localPlayer?.id) {
           this.showHitmarker(data.killed);
@@ -2963,7 +2996,11 @@ class Game {
           for (const mill of data.windmills) {
             const prev = this.windmillStates[mill.id];
             const myTeam = this.localPlayer?.team;
-            if (prev && prev.team !== mill.team && mill.team) this.playSound(mill.team === myTeam ? 'bell' : 'bell-low');
+            if (prev && prev.team !== mill.team && mill.team) {
+              this.playSound(mill.team === myTeam ? 'bell' : 'bell-low');
+              if (Math.random() < 0.6) this.radio(mill.team, 'capture');
+              else if (prev.team) this.radio(prev.team, 'lost');
+            }
             if (prev && prev.team !== mill.team && mill.team === myTeam) {
               const ship = this.players.get(this.localPlayer.id);
               const inside = ship && Math.hypot(ship.position.x - mill.x, ship.position.z - mill.z) <= GAME_CONFIG.CAPTURE_RADIUS;
@@ -2979,6 +3016,10 @@ class Game {
       this.socket.on('roundEnd', (d) => {
         if (!d) return;
         this.roundWins = d.roundWins || this.roundWins;
+        if (d.winner) {
+          this.radio(d.winner, 'win', null, true);
+          setTimeout(() => this.radio(d.winner === 'red' ? 'blue' : 'red', 'lose', null, true), 3500);
+        }
         if (!d.final) this.showIntermission(d);
         this.controls.shooting = false;
       });
@@ -2997,8 +3038,9 @@ class Game {
         if (this.gameState) this.gameState.scores = { red: 0, blue: 0 };
         this.updateHUD();
         this.applyModeHud();
-        this.instruments.toast(this.suddenDeath ? '🔥' : '🏁', `Round ${d.round} of ${d.maxRounds}`,
-          this.suddenDeath ? 'SUDDEN DEATH · windmills score double' : 'Fresh windmills, fresh scores');
+        const acts = ['Act I · The opening ceremony', 'Act II · The long afternoon', 'Act III · The last light'];
+        this.instruments.toast(this.suddenDeath ? '🔥' : '🏁', acts[d.round - 1] || `Round ${d.round}`,
+          this.suddenDeath ? 'The bells ring at sundown · windmills score double' : `Round ${d.round} of ${d.maxRounds} · fresh windmills, fresh scores`);
       });
 
       // Killstreak rewards
@@ -3021,6 +3063,8 @@ class Game {
           }
           this.playSound('streak');
         } else if (d.reward) {
+          const sp = this.gameState?.players?.find(p => p.id === d.playerId);
+          if (sp?.isBot) this.radio(sp.team, 'streak', sp.username);
           this.instruments.toast('🔥', `${d.username} is on a ${d.streak} kill streak`,
             d.reward === 'radar' ? 'Radar sweep' : d.reward === 'wingman' ? 'Wingman called in' : 'Airstrike!');
         }
@@ -3206,6 +3250,15 @@ class Game {
         gain.gain.setValueAtTime(0.14, t);
         gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
         osc.start(t); osc.stop(t + 0.4);
+        break;
+      case 'radio':
+        // Squelch blip
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(1800, t);
+        osc.frequency.setValueAtTime(2400, t + 0.03);
+        gain.gain.setValueAtTime(0.03, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+        osc.start(t); osc.stop(t + 0.09);
         break;
       case 'stall':
         // Low pulsing buzzer
@@ -3515,11 +3568,11 @@ class Game {
     if (!el || !team) return;
     const enemy = team === 'red' ? 'blue' : 'red';
     el.textContent = '';
-    el.appendChild(document.createTextNode(`YOU'RE ON THE ${team.toUpperCase()} TEAM`));
+    el.appendChild(document.createTextNode(`YOU FLY FOR ${TEAMS[team].short}`));
     const sub = document.createElement('small');
     sub.textContent = this.mode === 'tdm'
-      ? `Shoot down ${enemy} planes · first to ${this.rules.tdmTarget || 30} wins`
-      : `Capture windmills · Shoot down ${enemy} planes`;
+      ? `${TEAMS[team].club} · Shoot down ${TEAMS[enemy].village}'s planes · first to ${this.rules.tdmTarget || 30}`
+      : `${TEAMS[team].club} · Hold the windmills · Shoot down ${TEAMS[enemy].village}'s planes`;
     el.appendChild(sub);
     el.className = `show ${team}`;
     setTimeout(() => { el.className = ''; }, 4500);
@@ -3591,15 +3644,15 @@ class Game {
     const redEl = document.getElementById('score-red');
     const blueEl = document.getElementById('score-blue');
     if (redEl) {
-      redEl.textContent = `RED ${scores.red}`;
+      redEl.textContent = `${TEAMS.red.short} ${scores.red}`;
       redEl.classList.toggle('mine', this.localPlayer.team === 'red');
     }
     if (blueEl) {
-      blueEl.textContent = `${scores.blue} BLUE`;
+      blueEl.textContent = `${scores.blue} ${TEAMS.blue.short}`;
       blueEl.classList.toggle('mine', this.localPlayer.team === 'blue');
     }
     const myTeamEl = document.getElementById('my-team');
-    if (myTeamEl) myTeamEl.textContent = (this.localPlayer.team || '').toUpperCase();
+    if (myTeamEl) myTeamEl.textContent = this.localPlayer.team ? TEAMS[this.localPlayer.team].short : '';
 
     if (this.scoreboardOpen) this.renderScoreboard();
   }
@@ -3647,7 +3700,7 @@ class Game {
 
     const scoreEl = document.getElementById('end-score');
     if (scoreEl) scoreEl.innerHTML =
-      `<span class="red">RED ${scores.red}</span> &mdash; <span class="blue">${scores.blue} BLUE</span> <span style="font-size:0.7em;color:#90a4ae">rounds</span>`;
+      `<span class="red">${TEAMS.red.short} ${scores.red}</span> &mdash; <span class="blue">${scores.blue} ${TEAMS.blue.short}</span> <span style="font-size:0.7em;color:#90a4ae">rounds</span>`;
 
     const statsEl = document.getElementById('end-stats');
     if (statsEl && this.localPlayer) {
@@ -3658,10 +3711,10 @@ class Game {
     const reasonEl = document.getElementById('end-reason');
     if (reasonEl) {
       const target = this.rules.tdmTarget || 30;
-      const winName = winner ? winner.toUpperCase() : '';
+      const winName = winner ? TEAMS[winner].village : '';
       reasonEl.textContent = winner
-        ? `${winName} took the match ${scores.red}–${scores.blue} in rounds`
-        : 'Rounds split evenly · a draw';
+        ? `${winName} takes the Cup ${scores.red}–${scores.blue} in rounds · ${TEAMS[winner === 'red' ? 'blue' : 'red'].village} serves the flour`
+        : 'Rounds split evenly · both villages bake';
     }
     const mvpEl = document.getElementById('end-mvp');
     const mvp = this.gameState.mvp;
@@ -4266,6 +4319,15 @@ class Game {
       this.horizonRing.material.color.copy(sky.fogColor).multiplyScalar(0.55);
     }
 
+    // Nightfall is a story beat: once per evening someone says so
+    if (this.localPlayer && sky.nightFactor > 0.5 && !this.nightTold) {
+      this.nightTold = true;
+      this.instruments.toast('🌙', 'The last light goes', 'Lit planes show further; the treeline hides you');
+      setTimeout(() => this.radio(null, 'night'), 2500);
+    } else if (sky.nightFactor < 0.2) {
+      this.nightTold = false;
+    }
+
     // Materials that react to light and weather
     const lamp = this.sky.lampFactor;
     this.mats.glow.emissiveIntensity = 0.05 + lamp * 2.4;
@@ -4674,16 +4736,17 @@ class Game {
   showIntermission(d) {
     const el = document.getElementById('intermission');
     if (!el) return;
-    const winName = d.winner ? d.winner.toUpperCase() : null;
-    el.querySelector('.im-round').textContent = `Round ${d.round} of ${this.rules.maxRounds || 3}`;
+    const winName = d.winner ? TEAMS[d.winner].short : null;
+    const acts = ['Act I · The opening ceremony', 'Act II · The long afternoon', 'Act III · The last light'];
+    el.querySelector('.im-round').textContent = `${acts[d.round - 1] || 'Round ' + d.round} · complete`;
     const title = el.querySelector('.im-title');
     title.textContent = winName ? `${winName} WINS THE ROUND` : 'ROUND DRAWN';
     title.className = `im-title ${d.winner || ''}`;
     el.querySelector('.im-score').textContent = `${d.scores.red} – ${d.scores.blue}`;
     const wins = el.querySelector('.im-wins');
     wins.textContent = '';
-    const r = document.createElement('span'); r.className = 'red'; r.textContent = 'RED ' + '●'.repeat(d.roundWins.red) + '○'.repeat(Math.max(0, (this.rules.roundsToWin || 2) - d.roundWins.red));
-    const b = document.createElement('span'); b.className = 'blue'; b.textContent = '○'.repeat(Math.max(0, (this.rules.roundsToWin || 2) - d.roundWins.blue)) + '●'.repeat(d.roundWins.blue) + ' BLUE';
+    const r = document.createElement('span'); r.className = 'red'; r.textContent = TEAMS.red.short + ' ' + '●'.repeat(d.roundWins.red) + '○'.repeat(Math.max(0, (this.rules.roundsToWin || 2) - d.roundWins.red));
+    const b = document.createElement('span'); b.className = 'blue'; b.textContent = '○'.repeat(Math.max(0, (this.rules.roundsToWin || 2) - d.roundWins.blue)) + '●'.repeat(d.roundWins.blue) + ' ' + TEAMS.blue.short;
     wins.append(r, b);
     el.querySelector('.im-mvp').textContent = d.mvp ? `Round MVP: ${d.mvp.username}${d.mvp.isBot ? ' (BOT)' : ''} · ${d.mvp.kills} kills` : '';
     el.querySelector('.im-sudden').textContent = d.nextSuddenDeath ? 'Next: sudden death · windmills score double' : '';
@@ -4718,7 +4781,8 @@ class Game {
     for (const [, mill] of this.captureWindmills) mill.group.visible = !tdm;
     const target = this.rules.tdmTarget || 30;
     const roundTag = `Round ${this.round} of ${this.rules.maxRounds || 3} · ${this.roundWins.red}–${this.roundWins.blue}${this.suddenDeath ? ' · sudden death' : ''}`;
-    this.instruments.setModeCaption(tdm ? `Team Deathmatch · first to ${target} · ${roundTag}` : `Windmill Domination · ${roundTag}`, this.localPlayer?.team);
+    const village = this.localPlayer?.team ? TEAMS[this.localPlayer.team].short : '';
+    this.instruments.setModeCaption(tdm ? `Team Deathmatch · first to ${target} · ${roundTag}` : `The Windmill Cup · ${roundTag}`, village);
   }
 
   /** Spawn already flying, pointed at something worth doing */
@@ -4810,6 +4874,19 @@ class Game {
         }
       }
     }
+  }
+
+  /** A random bot on a team speaks (or a specific one when named) */
+  radio(team, event, name = null, force = false) {
+    if (!this.chatter || !this.gameState?.players) return;
+    let speaker = name;
+    if (!speaker) {
+      const bots = this.gameState.players.filter(p => p.isBot && (!team || p.team === team) && !String(p.username).includes('Wingman'));
+      if (!bots.length) return;
+      const pick = bots[Math.floor(Math.random() * bots.length)];
+      speaker = pick.username; team = pick.team;
+    }
+    this.chatter.say(speaker, team, event, force);
   }
 
   /** Fills the login-screen hangar with what this pilot has unlocked */

@@ -114,6 +114,32 @@
             font-weight: 600;
         }
 
+        #dispatch {
+            font-size: 0.9rem;
+            line-height: 1.5;
+            color: #cfd8dc;
+            margin: -0.6rem 0 1.1rem;
+            text-align: left;
+            border-left: 3px solid var(--accent);
+            padding-left: 0.8rem;
+        }
+        #dispatch .red { color: var(--red); }
+        #dispatch .blue { color: var(--blue); }
+        body.touch #dispatch { display: none; }
+
+        /* Radio chatter from the cast */
+        #radio {
+            display: none;
+            padding: 0.4rem 0.7rem;
+            border-left: 3px solid #9be7a1;
+            background: rgba(8, 14, 20, 0.78);
+            border-radius: 8px;
+            animation: sideIn 0.3s ease-out;
+        }
+        #radio.show { display: block; }
+        #radio .radio-who { display: block; font-size: 0.62rem; letter-spacing: 0.2em; color: #9be7a1; }
+        #radio .radio-line { display: block; font-size: 0.95rem; font-style: italic; color: #fff; }
+
         #login-features {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -1853,13 +1879,11 @@
         <div id="login-screen" class="ui-element">
             <div id="login-form">
                 <h1>Dutch Village Flight</h1>
-                <h2>June Skies</h2>
-                <div id="login-features">
-                    <span>Living day &amp; night cycle</span>
-                    <span>Dynamic weather &amp; storms</span>
-                    <span>Capture the windmills</span>
-                    <span>Dogfight with AI pilots</span>
-                </div>
+                <h2>The Windmill Cup</h2>
+                <p id="dispatch">Every June the villages of <b class="red">Oostwijk</b> and <b class="blue">Westerhaven</b> fly for the Cup.
+                Hold the windmills at the last light and your village grinds the midsummer flour. Lose, and you serve it.
+                It has gone on for ninety-one years. Nobody remembers why. Everyone takes it far too seriously.</p>
+
                 <div id="login-rank">Lv 1 · Cadet · 0 XP</div>
                 <div id="mode-picker">
                     <label class="mode-card">
@@ -2040,6 +2064,7 @@
         <div id="notify-column">
             <div id="nav-panel" class="glass"><div class="nav-title">Targets</div><div id="nav-rows"></div></div>
             <div id="kill-feed"></div>
+            <div id="radio"><span class="radio-who"></span><span class="radio-line"></span></div>
             <div id="kill-banner"></div>
             <div id="medal"><span class="medal-icon"></span><span class="medal-title"></span><span class="medal-sub"></span></div>
             <div id="toasts"></div>
@@ -2139,6 +2164,7 @@
             <p><strong>Win</strong></p>
             <p>Follow the yellow marker to a windmill and fly inside its big glowing circle until the bar fills. Owned windmills score every few seconds. Shooting down enemy planes scores too.</p>
             <p><strong>Relax</strong></p>
+            <p>You fly for whichever village needs a pilot. The other pilots are the villages' regulars: you'll hear them on the radio.</p>
             <p>Bots leave you alone for your first minute in the air, and we'll walk you through the controls once you're airborne.</p>
             <button id="tutorial-close">Take off! 🛫</button>
         </div>

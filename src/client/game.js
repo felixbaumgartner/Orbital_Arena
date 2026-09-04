@@ -124,6 +124,11 @@ const GAME_CONFIG = {
   RECONNECT_ATTEMPTS: 5,
   RECONNECT_DELAY: 1000,
 
+  // Arena: land inside the dike, sea beyond it
+  ARENA_RADIUS: 900,
+  COAST_BAND: 70,             // chunks whose centre is this close to the dike get beach-only scenery
+  BOUNDARY_ASSIST: 1.6,       // turn-rate nudge back toward the arena when outside
+
   // Environment
   DAY_CYCLE_MINUTES: 16,      // real minutes per in-game day
   START_HOUR: 8.5,
@@ -667,7 +672,97 @@ class Game {
     this.cloudShadow.renderOrder = 2;
     this.scene.add(this.cloudShadow);
 
+    this.createCoast();
+    this.createSetPieces();
     this.updateChunks(0, 0);
+  }
+
+  /** The dike ring and the sea beyond it: the arena has an edge you can see */
+  createCoast() {
+    const R = GAME_CONFIG.ARENA_RADIUS;
+    const sea = new THREE.Mesh(new THREE.RingGeometry(R - 6, 3200, 96, 1), this.mats.water);
+    sea.rotation.x = -Math.PI / 2;
+    sea.position.y = 0.26;
+    sea.receiveShadow = true;
+    sea.renderOrder = 1;
+    this.scene.add(sea);
+    this.sea = sea;
+
+    // Dike: a raised grassy bank with a stone face to the sea
+    const batch = new ChunkBatch();
+    const segs = 72;
+    for (let i = 0; i < segs; i++) {
+      const a0 = (i / segs) * Math.PI * 2, a1 = ((i + 1) / segs) * Math.PI * 2;
+      const am = (a0 + a1) / 2;
+      const len = (a1 - a0) * (R - 20) + 2;
+      batch.add('grassPatch', { geo: new THREE.BoxGeometry(len, 4.5, 30), color: 0xA9CC8E, x: Math.cos(am) * (R - 20), y: 2.25, z: Math.sin(am) * (R - 20), ry: -am });
+      batch.add('brick', { geo: new THREE.BoxGeometry(len, 3.2, 6), color: 0x8E8E86, x: Math.cos(am) * (R - 4), y: 1.6, z: Math.sin(am) * (R - 4), ry: -am });
+    }
+    for (const mesh of batch.build(this.mats)) this.scene.add(mesh);
+
+    // Lighthouses on the north and south dikes for orientation
+    const objs = [], cols = [];
+    this.addLighthouse(0, -(R - 30), 'static', objs, cols);
+    this.addLighthouse(0, R - 30, 'static', objs, cols);
+    this.staticColliders = cols;
+    this.obstacles.set('static', this.staticColliders);
+  }
+
+  /**
+   * Fixed landmarks every match shares: a great canal you can run low
+   * along under poplars, a cathedral spire to steer by, and a wind farm
+   * between East and Hill mills that is the fast, dangerous line.
+   */
+  createSetPieces() {
+    const batch = new ChunkBatch();
+    const cols = this.staticColliders;
+    const R = GAME_CONFIG.ARENA_RADIUS;
+    const CX = -120;
+    const len = (R - 40) * 2;
+
+    // Great Canal, north to south, with banks and poplar rows both sides
+    batch.add('water', { geo: new THREE.PlaneGeometry(26, len), rx: -Math.PI / 2, x: CX, y: 0.24, z: 0 });
+    batch.add('soil', { geo: new THREE.PlaneGeometry(4, len), color: 0x8A7A55, rx: -Math.PI / 2, x: CX - 15, y: 0.26, z: 0 });
+    batch.add('soil', { geo: new THREE.PlaneGeometry(4, len), color: 0x8A7A55, rx: -Math.PI / 2, x: CX + 15, y: 0.26, z: 0 });
+    for (let z = -(R - 60); z <= R - 60; z += 22) {
+      cols.push(addTree(batch, 'poplar', CX - 24, z, 1.05, z * 3 + 1));
+      cols.push(addTree(batch, 'poplar', CX + 24, z, 1.05, z * 3 + 2));
+    }
+    // Three stone bridges
+    for (const z of [-420, 0, 420]) {
+      batch.add('metal', { geo: new THREE.BoxGeometry(34, 1.2, 9), color: 0x7A7A7A, x: CX, y: 2.0, z });
+      batch.add('metal', { geo: new THREE.BoxGeometry(34, 1.4, 0.3), color: 0x4A4A4A, x: CX, y: 3.2, z: z - 4.4 });
+      batch.add('metal', { geo: new THREE.BoxGeometry(34, 1.4, 0.3), color: 0x4A4A4A, x: CX, y: 3.2, z: z + 4.4 });
+    }
+
+    // Cathedral: nave, twin towers and a 62-unit spire
+    const cx = 150, cz = 150;
+    batch.add('brick', { geo: new THREE.BoxGeometry(22, 18, 44), color: 0x8F5B45, x: cx, y: 9, z: cz });
+    batch.add('roof', { geo: gableGeometry(22, 9, 44), color: 0x3E3E48, x: cx, y: 18, z: cz });
+    for (const tx of [cx - 8, cx + 8]) {
+      batch.add('brick', { geo: new THREE.BoxGeometry(7, 34, 7), color: 0x8F5B45, x: tx, y: 17, z: cz - 26 });
+      batch.add('roof', { geo: new THREE.ConeGeometry(4.6, 9, 4), color: 0x3E3E48, x: tx, y: 38.5, z: cz - 26, ry: Math.PI / 4 });
+    }
+    batch.add('brick', { geo: new THREE.BoxGeometry(9, 30, 9), color: 0x8F5B45, x: cx, y: 15, z: cz - 26 });
+    batch.add('roof', { geo: new THREE.ConeGeometry(5.2, 32, 8), color: 0x3E3E48, x: cx, y: 46, z: cz - 26 });
+    batch.add('glow', { geo: new THREE.SphereGeometry(1.2, 8, 6), x: cx, y: 63, z: cz - 26 });
+    cols.push({ x: cx, z: cz, radius: 24, topY: 28 });
+    cols.push({ x: cx, z: cz - 26, radius: 6, topY: 64 });
+    this.registerLandmark('static', cx, cz, '⛪', 'The Cathedral', 'Steer by the spire');
+
+    // Wind farm shortcut: six turbines on the line from East mill to Hill mill
+    for (let i = 0; i < 6; i++) {
+      const t = 0.15 + i * 0.14;
+      const x = 300 + (200 - 300) * t, z = 0 + (-200 - 0) * t;
+      const tb = addTurbine(batch, this.mats, x + (i % 2 ? 18 : -18), z, 0.6, 46);
+      tb.rotor.traverse(c => { if (c.isMesh) c.castShadow = true; });
+      this.scene.add(tb.rotor);
+      cols.push(tb.collider);
+      this.registerAmbient('static', { mesh: tb.rotor, type: 'turbine' });
+    }
+    this.registerLandmark('static', 250, -100, '🌬️', 'The Gauntlet', 'Six turbines between East and Hill');
+
+    for (const mesh of batch.build(this.mats)) this.scene.add(mesh);
   }
 
   seededRandom(seed) {
@@ -761,8 +856,24 @@ class Game {
     const biome = this.getBiome(chunkX, chunkZ);
     const chunkKey = `${chunkX},${chunkZ}`;
     const rnd = (k) => this.seededRandom(seed + k);
-    const high = lod === 'high';
     const flowerPatches = [];
+
+    // Beyond the dike there is only sea: register an empty chunk
+    const ccx = baseX + CS / 2, ccz = baseZ + CS / 2;
+    const fromCentre = Math.hypot(ccx, ccz);
+    if (fromCentre > GAME_CONFIG.ARENA_RADIUS + CS * 0.7) {
+      this.chunks.set(chunkKey, []);
+      this.chunkLods.set(chunkKey, lod);
+      this.obstacles.set(chunkKey, []);
+      return;
+    }
+    // Near the dike, and in the Great Canal's column, keep the land open
+    const coastal = fromCentre > GAME_CONFIG.ARENA_RADIUS - GAME_CONFIG.COAST_BAND - CS * 0.7;
+    const canalColumn = chunkX === -1;
+    const high = lod === 'high' && !coastal && !canalColumn;
+    const nearCanal = (x) => Math.abs(x + 120) < 48;
+    const nearSea = (x, z) => Math.hypot(x, z) > GAME_CONFIG.ARENA_RADIUS - 36;
+    const addTreeSafe = (b, kind, x, z, sc, sd) => (nearCanal(x) || nearSea(x, z)) ? null : addTree(b, kind, x, z, sc, sd);
 
     // --- Ground tone patches: textured grass and ploughed soil ---
     const grassTints = [0xC2DDAA, 0xA9CC8E, 0xD6E6BC, 0x9DBF84, 0xB8D49C];
@@ -857,12 +968,12 @@ class Game {
         const across = (axis === 'x' ? baseZ : baseX) + rnd(s + 2) * CS;
         if (Math.abs(across - roadPos) < 30) continue;
         const p = place(along, across);
-        colliders.push(addTree(batch, rnd(s + 4) < 0.15 ? 'willow' : 'oak', p.x, p.z, 0.75 + rnd(s + 3) * 0.6, seed + s));
+        colliders.push(addTreeSafe(batch, rnd(s + 4) < 0.15 ? 'willow' : 'oak', p.x, p.z, 0.75 + rnd(s + 3) * 0.6, seed + s));
       }
       for (let along = along0 + 8; along < along0 + CS; along += 18) {
         if (rnd(along + 3) < 0.25) continue;
         const p = place(along, roadPos - 7.5);
-        colliders.push(addTree(batch, 'poplar', p.x, p.z, 0.9 + rnd(along) * 0.3, seed + along));
+        colliders.push(addTreeSafe(batch, 'poplar', p.x, p.z, 0.9 + rnd(along) * 0.3, seed + along));
       }
     }
 
@@ -936,11 +1047,11 @@ class Game {
       const numTrees = 2 + Math.floor(rnd(550) * 3);
       for (let i = 0; i < numTrees; i++) {
         const s = 6000 + i * 100;
-        colliders.push(addTree(batch, 'oak', baseX + rnd(s + 1) * CS, baseZ + rnd(s + 2) * CS, 0.6 + rnd(s + 3) * 0.5, seed + s));
+        colliders.push(addTreeSafe(batch, 'oak', baseX + rnd(s + 1) * CS, baseZ + rnd(s + 2) * CS, 0.6 + rnd(s + 3) * 0.5, seed + s));
       }
 
       // Wind farm on the open land
-      if (rnd(880) > 0.86) this.addTurbineRow(batch, baseX, baseZ, seed + 890, chunkKey, objects, colliders);
+      if (!coastal && !canalColumn && rnd(880) > 0.86) this.addTurbineRow(batch, baseX, baseZ, seed + 890, chunkKey, objects, colliders);
     }
 
     // --- BIOME: WATERLAND ---
@@ -957,7 +1068,7 @@ class Game {
         batch.add('soil', { geo: new THREE.PlaneGeometry(CS, 2.5), color: 0x8A7A55, rx: -Math.PI / 2, x: baseX + CS / 2, y: 0.24, z: canalZ + canalW / 2 + 1 });
         // Poplars along the far bank
         for (let x = baseX + 6; x < baseX + CS; x += 13) {
-          colliders.push(addTree(batch, 'poplar', x, canalZ + canalW / 2 + 6, 0.9 + rnd(x) * 0.35, seed + x));
+          colliders.push(addTreeSafe(batch, 'poplar', x, canalZ + canalW / 2 + 6, 0.9 + rnd(x) * 0.35, seed + x));
         }
         if (high && rnd(710) > 0.35) {
           const bx = baseX + 30 + rnd(711) * (CS - 60);
@@ -970,7 +1081,7 @@ class Game {
         batch.add('soil', { geo: new THREE.PlaneGeometry(2.5, CS), color: 0x8A7A55, rx: -Math.PI / 2, x: canalX - canalW / 2 - 1, y: 0.24, z: baseZ + CS / 2 });
         batch.add('soil', { geo: new THREE.PlaneGeometry(2.5, CS), color: 0x8A7A55, rx: -Math.PI / 2, x: canalX + canalW / 2 + 1, y: 0.24, z: baseZ + CS / 2 });
         for (let z = baseZ + 6; z < baseZ + CS; z += 13) {
-          colliders.push(addTree(batch, 'poplar', canalX + canalW / 2 + 6, z, 0.9 + rnd(z) * 0.35, seed + z));
+          colliders.push(addTreeSafe(batch, 'poplar', canalX + canalW / 2 + 6, z, 0.9 + rnd(z) * 0.35, seed + z));
         }
       }
 
@@ -993,19 +1104,19 @@ class Game {
             });
           }
         }
-        colliders.push(addTree(batch, 'willow', x + r + 6, z - 3, 0.8 + rnd(s + 9) * 0.4, seed + s));
+        colliders.push(addTreeSafe(batch, 'willow', x + r + 6, z - 3, 0.8 + rnd(s + 9) * 0.4, seed + s));
       }
 
       const numTrees = 2 + Math.floor(rnd(750) * 3);
       for (let i = 0; i < numTrees; i++) {
         const s = 7500 + i * 100;
-        colliders.push(addTree(batch, 'oak', baseX + rnd(s + 1) * CS, baseZ + rnd(s + 2) * CS, 0.8 + rnd(s + 3) * 0.4, seed + s));
+        colliders.push(addTreeSafe(batch, 'oak', baseX + rnd(s + 1) * CS, baseZ + rnd(s + 2) * CS, 0.8 + rnd(s + 3) * 0.4, seed + s));
       }
 
       if (high && rnd(799) > 0.6) {
         this.addWindmill(baseX + 20 + rnd(800) * (CS - 40), baseZ + 20 + rnd(801) * (CS - 40), objects, colliders);
       }
-      if (rnd(881) > 0.8) this.addTurbineRow(batch, baseX, baseZ, seed + 891, chunkKey, objects, colliders);
+      if (!coastal && !canalColumn && rnd(881) > 0.8) this.addTurbineRow(batch, baseX, baseZ, seed + 891, chunkKey, objects, colliders);
     }
 
     // --- Striped tulip fields (farmland's signature look) ---
@@ -1029,7 +1140,7 @@ class Game {
     }
 
     // --- Rare landmarks: reasons to fly toward the horizon ---
-    const landmarkRoll = rnd(4242);
+    const landmarkRoll = (coastal || canalColumn) ? 1 : rnd(4242);
     if (landmarkRoll < 0.025) {
       this.addCastle(baseX + CS / 2, baseZ + CS / 2, objects, colliders);
       this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🏰', 'Castle', 'A medieval stronghold');
@@ -1078,7 +1189,7 @@ class Game {
 
     this.chunks.set(chunkKey, objects);
     this.chunkLods.set(chunkKey, lod);
-    this.obstacles.set(chunkKey, colliders);
+    this.obstacles.set(chunkKey, colliders.filter(Boolean));
   }
 
   /** A line of three modern wind turbines with spinning rotors */
@@ -3788,6 +3899,21 @@ class Game {
       Math.min(GAME_CONFIG.MAX_ALTITUDE, ship.position.y));
 
     if (this.crashGrace > 0) this.crashGrace -= delta;
+
+    // Arena edge: warn, then steer the plane back toward the land
+    const out = Math.hypot(ship.position.x, ship.position.z) - GAME_CONFIG.ARENA_RADIUS;
+    const boundaryEl = document.getElementById('boundary');
+    if (out > 0) {
+      const toCentre = Math.atan2(ship.position.x, ship.position.z); // heading that flies toward (0,0)
+      let d = toCentre - this.shipRotation;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      const strength = Math.min(1, out / 120);
+      this.shipRotation += Math.sign(d) * GAME_CONFIG.BOUNDARY_ASSIST * strength * delta;
+      ship.rotation.y = this.shipRotation;
+      if (boundaryEl && !boundaryEl.classList.contains('show')) { boundaryEl.classList.add('show'); this.playSound('warning'); }
+    } else if (boundaryEl && boundaryEl.classList.contains('show')) {
+      boundaryEl.classList.remove('show');
+    }
 
     // Update contrail
     this.updateTrail(this.localPlayer.id, ship.position);

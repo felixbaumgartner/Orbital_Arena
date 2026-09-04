@@ -507,6 +507,13 @@
         }
         #stall.show { animation: pullupBlink 0.5s steps(2, start) infinite; }
 
+        #boundary {
+            position: fixed; top: 30%; left: 50%; transform: translateX(-50%);
+            font-size: 1.3rem; font-weight: 700; letter-spacing: 0.25em; color: #fff; background: rgba(160, 30, 30, 0.75);
+            border-radius: 8px; padding: 0.3rem 1.2rem; display: none; pointer-events: none;
+        }
+        #boundary.show { display: block; animation: pullupBlink 0.7s steps(2, start) infinite; }
+
         #stealth-chip {
             position: fixed; bottom: 10.6rem; left: 50%; transform: translateX(-50%);
             font-size: 0.75rem; letter-spacing: 0.12em; color: #b9f6ca; background: rgba(8, 14, 20, 0.6);
@@ -1990,6 +1997,7 @@
             <div id="hitmarker"></div>
             <div id="pullup">PULL UP</div>
             <div id="stall">STALL · NOSE DOWN</div>
+            <div id="boundary">TURN BACK · LEAVING THE ARENA</div>
             <div id="stealth-chip">🌲 BELOW THE TREES · hidden from radar</div>
 
             <canvas id="radar" width="160" height="160"></canvas>

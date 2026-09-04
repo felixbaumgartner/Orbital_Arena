@@ -79,6 +79,15 @@ const GAME_CONFIG = {
   MOVEMENT_SPEED: 50,
   BOOST_SPEED: 100,
 
+  // Energy flight model
+  STALL_SPEED: 27,        // below this the nose drops until speed returns
+  STALL_RECOVER: 34,
+  DIVE_MAX_SPEED: 135,
+  GRAVITY_GAIN: 32,       // speed gained per second in a full dive (lost climbing)
+  TURN_DRAG: 7,           // speed lost per second at full turn rate
+  THRUST_RESPONSE: 0.9,   // how quickly the engine pulls speed back toward cruise
+  ROLL_SPEED_COST: 10,
+
   // Turning & banking
   TURN_RATE: 3,          // max turn rate (rad/s)
   TURN_SMOOTHING: 6,     // how quickly turn rate ramps toward input (per second)
@@ -292,6 +301,12 @@ class Game {
     this.round = 1;
     this.roundWins = { red: 0, blue: 0 };
     this.suddenDeath = false;
+
+    // Energy flight model
+    this.airspeed = GAME_CONFIG.MOVEMENT_SPEED;
+    this.stalled = false;
+    this.stallBeep = 0;
+    this.stealthy = false;
     this.countdownEndsAt = 0;
     this.countdownLast = null;
     this.sessionXp = 0;
@@ -2810,6 +2825,7 @@ class Game {
           for (const mill of data.windmills) {
             const prev = this.windmillStates[mill.id];
             const myTeam = this.localPlayer?.team;
+            if (prev && prev.team !== mill.team && mill.team) this.playSound(mill.team === myTeam ? 'bell' : 'bell-low');
             if (prev && prev.team !== mill.team && mill.team === myTeam) {
               const ship = this.players.get(this.localPlayer.id);
               const inside = ship && Math.hypot(ship.position.x - mill.x, ship.position.z - mill.z) <= GAME_CONFIG.CAPTURE_RADIUS;
@@ -2835,6 +2851,8 @@ class Game {
         this.suddenDeath = !!d.suddenDeath;
         this.hideIntermission();
         this.calloutsDone.clear();
+        this.airspeed = GAME_CONFIG.MOVEMENT_SPEED * (this.planeStats.speed || 1);
+        this.stalled = false;
         this.countdownEndsAt = performance.now() + (d.countdown || 5000);
         this.windmillStates = {};
         for (const mill of CAPTURE_WINDMILLS) this.windmillStates[mill.id] = { id: mill.id, team: null, progress: 0 };
@@ -2895,19 +2913,48 @@ class Game {
       master.gain.value = 0.5;
       master.connect(ctx.destination);
 
-      // Continuous engine hum: sawtooth through a lowpass, pitch follows speed
+      // Propeller: two detuned saws through a lowpass, amplitude-throbbed by
+      // an LFO whose rate follows RPM, so it reads as blades not a buzzer
       const engineOsc = ctx.createOscillator();
       engineOsc.type = 'sawtooth';
-      engineOsc.frequency.value = 70;
+      engineOsc.frequency.value = 62;
+      const engineOsc2 = ctx.createOscillator();
+      engineOsc2.type = 'sawtooth';
+      engineOsc2.frequency.value = 62.9;
       const engineFilter = ctx.createBiquadFilter();
       engineFilter.type = 'lowpass';
-      engineFilter.frequency.value = 220;
+      engineFilter.frequency.value = 320;
       const engineGain = ctx.createGain();
       engineGain.gain.value = 0.05;
-      engineOsc.connect(engineFilter).connect(engineGain).connect(master);
-      engineOsc.start();
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = 24;
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = 0.02;
+      lfo.connect(lfoGain).connect(engineGain.gain);
+      engineOsc.connect(engineFilter);
+      engineOsc2.connect(engineFilter);
+      engineFilter.connect(engineGain).connect(master);
+      engineOsc.start(); engineOsc2.start(); lfo.start();
 
-      this.audio = { ctx, master, engineOsc, engineGain, muted: false };
+      // Wind: looping noise through a bandpass, louder with speed and in dives
+      const len = ctx.sampleRate * 2;
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      const wind = ctx.createBufferSource();
+      wind.buffer = buf;
+      wind.loop = true;
+      const windFilter = ctx.createBiquadFilter();
+      windFilter.type = 'bandpass';
+      windFilter.frequency.value = 700;
+      windFilter.Q.value = 0.6;
+      const windGain = ctx.createGain();
+      windGain.gain.value = 0;
+      wind.connect(windFilter).connect(windGain).connect(master);
+      wind.start();
+
+      this.audio = { ctx, master, engineOsc, engineOsc2, engineGain, engineFilter, lfo, windGain, windFilter, muted: false };
     } catch (e) {
       console.error('Audio init failed:', e);
     }
@@ -3022,6 +3069,31 @@ class Game {
         gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
         osc.start(t); osc.stop(t + 0.4);
         break;
+      case 'stall':
+        // Low pulsing buzzer
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(140, t);
+        osc.frequency.setValueAtTime(120, t + 0.15);
+        gain.gain.setValueAtTime(0.09, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+        osc.start(t); osc.stop(t + 0.3);
+        break;
+      case 'bell':
+      case 'bell-low': {
+        // Church bell: fundamental plus two partials, long decay
+        const f0 = name === 'bell' ? 523 : 392;
+        for (const [ratio, amp] of [[1, 0.22], [2.02, 0.09], [2.98, 0.05]]) {
+          const o = ctx.createOscillator();
+          const g = ctx.createGain();
+          o.type = 'sine';
+          o.frequency.setValueAtTime(f0 * ratio, t);
+          g.gain.setValueAtTime(amp, t);
+          g.gain.exponentialRampToValueAtTime(0.001, t + 1.8 / ratio);
+          o.connect(g).connect(master);
+          o.start(t); o.stop(t + 2);
+        }
+        break;
+      }
       case 'lock':
         // Short two-note chirp when the bracket turns red
         osc.type = 'sine';
@@ -3074,8 +3146,18 @@ class Game {
 
   updateEngineSound(speed) {
     if (!this.audio || this.audio.muted) return;
-    // Pitch scales with airspeed
-    this.audio.engineOsc.frequency.value = 40 + speed * 0.7;
+    const a = this.audio;
+    const base = 40 + speed * 0.55;
+    a.engineOsc.frequency.value = base;
+    a.engineOsc2.frequency.value = base * 1.012;
+    a.lfo.frequency.value = 14 + speed * 0.22;
+    a.engineFilter.frequency.value = 220 + speed * 3;
+    a.engineGain.gain.value = this.stalled ? 0.035 : 0.05 + (this.controls.boost ? 0.02 : 0);
+    // Wind rises with the square of speed and in a dive
+    const s = Math.max(0, (speed - 30) / 100);
+    const dive = Math.max(0, -this.pitchAngle) * 0.5;
+    a.windGain.gain.value = Math.min(0.2, s * s * 0.16 + dive * 0.06);
+    a.windFilter.frequency.value = 500 + speed * 6;
   }
 
   // =========================================================================
@@ -3083,6 +3165,7 @@ class Game {
   // =========================================================================
 
   startBarrelRoll() {
+    if (this.rollCooldown <= 0 && this.rollTimer <= 0) this.airspeed = Math.max(GAME_CONFIG.STALL_SPEED * 0.8, this.airspeed - GAME_CONFIG.ROLL_SPEED_COST);
     if (this.rollTimer > 0 || this.rollCooldown > 0) return;
     if (this.crashed || this.dead || !this.controlsEnabled) return;
     this.rollTimer = GAME_CONFIG.ROLL_DURATION;
@@ -3162,6 +3245,7 @@ class Game {
     }
     for (const [id, otherShip] of this.players) {
       if (id === this.localPlayer?.id) continue;
+      if (teamOf[id] !== myTeam && this.isHiddenFromMe(otherShip, otherShip.position.distanceTo(ship.position))) continue;
       const p = project(otherShip.position.x, otherShip.position.z);
       if (!p.inRange) {
         if (!sweep || teamOf[id] === myTeam) continue;
@@ -3342,9 +3426,9 @@ class Game {
     const speedFill = document.querySelector('.speed-fill');
     const speedValue = document.getElementById('speed-value');
     if (!speedFill) return;
-    const pct = Math.max(0, Math.min(100, (speed / GAME_CONFIG.BOOST_SPEED) * 100));
+    const pct = Math.max(0, Math.min(100, (speed / GAME_CONFIG.DIVE_MAX_SPEED) * 100));
     speedFill.style.width = `${pct}%`;
-    speedFill.style.backgroundColor = speed > GAME_CONFIG.MOVEMENT_SPEED ? '#ffaa00' : '#2ecc71';
+    speedFill.style.backgroundColor = speed < GAME_CONFIG.STALL_RECOVER ? '#ff4444' : speed > GAME_CONFIG.MOVEMENT_SPEED * 1.3 ? '#ffaa00' : '#2ecc71';
     if (speedValue) speedValue.textContent = `${Math.round(speed * 4)} km/h`;
   }
 
@@ -3617,19 +3701,38 @@ class Game {
       this.throttle = Math.max(GAME_CONFIG.THROTTLE_MIN, this.throttle - GAME_CONFIG.THROTTLE_RATE * delta);
     }
 
-    let speed = GAME_CONFIG.MOVEMENT_SPEED * this.throttle * (this.planeStats.speed || 1);
-    if (this.controls.boost && this.localPlayer.energy > 0) {
-      speed = GAME_CONFIG.BOOST_SPEED;
+    // Energy model: the engine pulls toward cruise, gravity trades altitude
+    // for speed, hard turns scrub it, and too little of it stalls the wing
+    const planeSpeed = this.planeStats.speed || 1;
+    let cruise = GAME_CONFIG.MOVEMENT_SPEED * this.throttle * planeSpeed;
+    const boosting = this.controls.boost && this.localPlayer.energy > 0;
+    if (boosting) {
+      cruise = GAME_CONFIG.BOOST_SPEED * planeSpeed;
       this.localPlayer.energy = Math.max(0, this.localPlayer.energy - (GAME_CONFIG.ENERGY_DRAIN_RATE * delta));
     } else {
       this.localPlayer.energy = Math.min(100, this.localPlayer.energy + (GAME_CONFIG.ENERGY_REGEN_RATE * delta));
     }
-
-    // Golden tulip speed surge
     if (this.speedSurge > 0) {
       this.speedSurge -= delta;
-      speed *= GAME_CONFIG.SPEED_SURGE_MULTIPLIER;
+      cruise *= GAME_CONFIG.SPEED_SURGE_MULTIPLIER;
     }
+    this.airspeed += (cruise - this.airspeed) * Math.min(1, delta * GAME_CONFIG.THRUST_RESPONSE * (boosting ? 2.5 : 1));
+    this.airspeed -= Math.sin(this.pitchAngle) * GAME_CONFIG.GRAVITY_GAIN * delta;
+    this.airspeed -= Math.abs(this.rotationVelocity) / GAME_CONFIG.TURN_RATE * GAME_CONFIG.TURN_DRAG * delta;
+    this.airspeed = Math.max(GAME_CONFIG.STALL_SPEED * 0.6, Math.min(GAME_CONFIG.DIVE_MAX_SPEED, this.airspeed));
+    if (!this.stalled && this.airspeed < GAME_CONFIG.STALL_SPEED && this.controlsEnabled) {
+      this.stalled = true;
+      this.playSound('stall');
+    } else if (this.stalled && this.airspeed > GAME_CONFIG.STALL_RECOVER) {
+      this.stalled = false;
+    }
+    const stallEl = document.getElementById('stall');
+    if (stallEl) stallEl.classList.toggle('show', this.stalled);
+    if (this.stalled) {
+      this.stallBeep -= delta;
+      if (this.stallBeep <= 0) { this.stallBeep = 0.6; this.playSound('stall'); }
+    }
+    let speed = this.airspeed;
 
     this.updateEnergyBar(this.localPlayer.energy);
     this.updateSpeedBar(speed);
@@ -3639,7 +3742,7 @@ class Game {
 
     // Banked turning (A/D): turn rate eases toward the input
     const turnInput = Math.max(-1, Math.min(1, (this.controls.left ? 1 : 0) - (this.controls.right ? 1 : 0) + mouseTurn));
-    const targetTurnRate = turnInput * GAME_CONFIG.TURN_RATE * (this.planeStats.turn || 1);
+    const targetTurnRate = turnInput * GAME_CONFIG.TURN_RATE * (this.planeStats.turn || 1) * (this.stalled ? 0.4 : 1);
     const turnSmooth = Math.min(1, GAME_CONFIG.TURN_SMOOTHING * delta);
     this.rotationVelocity += (targetTurnRate - this.rotationVelocity) * turnSmooth;
     this.shipRotation += this.rotationVelocity * delta;
@@ -3650,6 +3753,7 @@ class Game {
     let pitchInput = Math.max(-1, Math.min(1, (this.controls.pitchUp ? 1 : 0) - (this.controls.pitchDown ? 1 : 0) + mousePitch));
     if (this.terrainWarn && this.instruments?.settings.assist !== false) pitchInput = 1; // auto pull-up
     let targetPitch = pitchInput * GAME_CONFIG.MAX_PITCH;
+    if (this.stalled) targetPitch = Math.min(targetPitch, -0.32); // the nose drops until you have speed again
     // Soft floor and ceiling: the climb eases off instead of slamming into the limit
     const headroom = GAME_CONFIG.MAX_ALTITUDE - ship.position.y;
     const floorRoom = ship.position.y - GAME_CONFIG.MIN_ALTITUDE;
@@ -3850,6 +3954,14 @@ class Game {
       if (this.pullUpBeep <= 0) { this.pullUpBeep = 0.45; this.playSound('warning'); }
     } else {
       this.pullUpBeep = 0;
+    }
+
+    // Treeline stealth chip
+    const stealthy = ship.position.y < (this.rules.stealthAltitude || 18);
+    if (stealthy !== this.stealthy) {
+      this.stealthy = stealthy;
+      const chip = document.getElementById('stealth-chip');
+      if (chip) chip.classList.toggle('show', stealthy);
     }
 
     // Screen-edge vignettes: boost rush and low health
@@ -4319,7 +4431,8 @@ class Game {
       const p = info[id];
       if (!p || p.team === myTeam) continue;
       const ic = this.interceptFor(ship, other, nose);
-      if (!ic || ic.dist > GAME_CONFIG.LOCK_RANGE || ic.angle > GAME_CONFIG.LOCK_CONE) continue;
+      if (!ic || ic.dist > GAME_CONFIG.LOCK_RANGE * this.visionScale() || ic.angle > GAME_CONFIG.LOCK_CONE) continue;
+      if (this.isHiddenFromMe(other, ic.dist)) continue;
       if (!best || ic.angle < best.ic.angle) best = { id, other, p, ic };
     }
 
@@ -4575,6 +4688,27 @@ class Game {
   }
 
   /**
+   * How far I can see other planes right now. Storms and fog shorten it,
+   * night lengthens it (lit planes), scouts see further.
+   */
+  visionScale() {
+    let k = this.planeStats.vision || 1;
+    const rain = this.weatherNow?.rain || 0;
+    const fog = this.weatherNow?.fogFar ? Math.max(0, 1 - this.weatherNow.fogFar / 1000) : 0;
+    k *= 1 - rain * 0.45 - fog * 0.5;
+    if (this.sky && this.sky.state.nightFactor > 0.5) k *= 1.4;
+    return Math.max(0.35, k);
+  }
+
+  /** True when an enemy plane is hidden from my sensors (below the treeline, not close) */
+  isHiddenFromMe(other, dist) {
+    if (this.radarSweepActive()) return false;
+    const stealthAlt = this.rules.stealthAltitude || 18;
+    const reveal = (this.rules.stealthReveal || 130) * (this.planeStats.vision || 1);
+    return other.position.y < stealthAlt && dist > reveal;
+  }
+
+  /**
    * Projects a world point to the screen; if it is out of view (or behind
    * the camera) the point is pushed to the HUD-safe edge with an arrow angle.
    */
@@ -4641,7 +4775,8 @@ class Game {
       const p = info[id];
       if (!p || p.team === myTeam) continue;
       const dist = other.position.distanceTo(me.position);
-      if (dist > enemyRange) continue;
+      if (dist > enemyRange * this.visionScale()) continue;
+      if (this.isHiddenFromMe(other, dist)) continue;
       const dy = other.position.y - me.position.y;
       enemies.push({ id: `e:${id}`, cls: 'enemy', dist: dist * 3, rel: relBearing(other.position.x, other.position.z),
         name: `${p.username || 'Enemy'}${dy > 12 ? ' ▲' : dy < -12 ? ' ▼' : ''}`, owner: p.isBot ? 'BOT' : '' });
@@ -4767,13 +4902,16 @@ class Game {
     if (!me || this.photoMode) { this.instruments.updateTags([]); return; }
     const info = {};
     if (this.gameState?.players) for (const p of this.gameState.players) info[p.id] = p;
+    const teamOf = {};
+    for (const id in info) teamOf[id] = info[id].team;
     const v = this._tagVec || (this._tagVec = new THREE.Vector3());
     const w = window.innerWidth, h = window.innerHeight;
     const list = [];
     for (const [id, ship] of this.players) {
       if (id === this.localPlayer.id || !ship.visible) continue;
       const dist = ship.position.distanceTo(me.position);
-      if (dist > (this.radarSweepActive() ? 4000 : 520)) continue;
+      if (dist > (this.radarSweepActive() ? 4000 : 520 * this.visionScale())) continue;
+      if (teamOf[id] !== this.localPlayer.team && this.isHiddenFromMe(ship, dist)) continue;
       v.set(ship.position.x, ship.position.y + 3.5, ship.position.z).project(this.camera);
       if (v.z > 1 || v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) continue;
       const p = info[id];

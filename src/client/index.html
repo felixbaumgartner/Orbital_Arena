@@ -499,6 +499,23 @@
             to { opacity: 0.15; }
         }
 
+        #stall {
+            position: fixed; top: 42%; left: 50%; transform: translateX(-50%);
+            font-size: 1.6rem; font-weight: 700; letter-spacing: 0.3em; color: #ffb300;
+            text-shadow: 0 0 14px rgba(255, 179, 0, 0.8); border: 2px solid #ffb300; border-radius: 6px;
+            padding: 0.15rem 1rem 0.15rem 1.3rem; opacity: 0; pointer-events: none;
+        }
+        #stall.show { animation: pullupBlink 0.5s steps(2, start) infinite; }
+
+        #stealth-chip {
+            position: fixed; bottom: 10.6rem; left: 50%; transform: translateX(-50%);
+            font-size: 0.75rem; letter-spacing: 0.12em; color: #b9f6ca; background: rgba(8, 14, 20, 0.6);
+            border: 1px solid rgba(185, 246, 202, 0.5); border-radius: 12px; padding: 0.15rem 0.7rem;
+            display: none; pointer-events: none;
+        }
+        #stealth-chip.show { display: block; }
+        body.touch #stealth-chip { bottom: auto; top: 13.6rem; left: max(10px, env(safe-area-inset-left)); transform: none; }
+
         /* Vignettes */
         .vignette {
             position: fixed;
@@ -1972,6 +1989,8 @@
             <div id="controls-hint" class="glass"><span class="key">H</span> controls</div>
             <div id="hitmarker"></div>
             <div id="pullup">PULL UP</div>
+            <div id="stall">STALL · NOSE DOWN</div>
+            <div id="stealth-chip">🌲 BELOW THE TREES · hidden from radar</div>
 
             <canvas id="radar" width="160" height="160"></canvas>
 

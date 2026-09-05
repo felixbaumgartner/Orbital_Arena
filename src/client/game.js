@@ -127,7 +127,7 @@ const GAME_CONFIG = {
   RECONNECT_DELAY: 1000,
 
   // Arena: land inside the dike, sea beyond it
-  ARENA_RADIUS: 900,
+  ARENA_RADIUS: 2400,
   COAST_BAND: 70,             // chunks whose centre is this close to the dike get beach-only scenery
   BOUNDARY_ASSIST: 1.6,       // turn-rate nudge back toward the arena when outside
 
@@ -803,13 +803,13 @@ class Game {
     const cols = this.staticColliders;
     const R = GAME_CONFIG.ARENA_RADIUS;
     const CX = -120;
-    const len = (R - 40) * 2;
+    const len = 1700;
 
     // Great Canal, north to south, with banks and poplar rows both sides
     batch.add('water', { geo: new THREE.PlaneGeometry(26, len), rx: -Math.PI / 2, x: CX, y: 0.24, z: 0 });
     batch.add('soil', { geo: new THREE.PlaneGeometry(4, len), color: 0x8A7A55, rx: -Math.PI / 2, x: CX - 15, y: 0.26, z: 0 });
     batch.add('soil', { geo: new THREE.PlaneGeometry(4, len), color: 0x8A7A55, rx: -Math.PI / 2, x: CX + 15, y: 0.26, z: 0 });
-    for (let z = -(R - 60); z <= R - 60; z += 22) {
+    for (let z = -830; z <= 830; z += 22) {
       cols.push(addTree(batch, 'poplar', CX - 24, z, 1.05, z * 3 + 1));
       cols.push(addTree(batch, 'poplar', CX + 24, z, 1.05, z * 3 + 2));
     }
@@ -954,8 +954,8 @@ class Game {
     }
     // Near the dike, and in the Great Canal's column, keep the land open
     const coastal = fromCentre > GAME_CONFIG.ARENA_RADIUS - GAME_CONFIG.COAST_BAND - CS * 0.7;
-    const canalColumn = chunkX === -1;
-    const high = lod === 'high' && !coastal && !canalColumn;
+    const canalColumn = false; // the Great Canal only clears trees along its banks now
+    const high = lod === 'high' && !coastal;
     const nearCanal = (x) => Math.abs(x + 120) < 48;
     const nearSea = (x, z) => Math.hypot(x, z) > GAME_CONFIG.ARENA_RADIUS - 36;
     const addTreeSafe = (b, kind, x, z, sc, sd) => (nearCanal(x) || nearSea(x, z)) ? null : addTree(b, kind, x, z, sc, sd);
@@ -1123,7 +1123,28 @@ class Game {
           }
         }
 
-        // Grazing sheep
+        // Country road with a little traffic (roads were half the charm)
+      if (rnd(360) > 0.45) {
+        const axis = rnd(361) > 0.5 ? 'x' : 'z';
+        const along0 = axis === 'x' ? baseX : baseZ;
+        const roadPos = (axis === 'x' ? baseZ : baseX) + 40 + rnd(362) * 120;
+        const road = makeRoad(this.mats, axis, along0, roadPos, CS);
+        this.scene.add(road);
+        objects.push(road);
+        const numCars = 1 + Math.floor(rnd(363) * 2);
+        for (let c = 0; c < numCars; c++) {
+          const car = makeCar(this.mats, seed + 900 + c * 77);
+          this.scene.add(car);
+          objects.push(car);
+          const dir = c % 2 === 0 ? 1 : -1;
+          this.registerAmbient(chunkKey, {
+            mesh: car, type: 'car', axis, dir, min: along0, max: along0 + CS,
+            pos: along0 + rnd(364 + c) * CS, lane: roadPos + (axis === 'x' ? dir : -dir) * 2.1, speed: 12 + rnd(365 + c) * 8,
+          });
+        }
+      }
+
+      // Grazing sheep
         const herd = 3 + Math.floor(rnd(5000) * 4);
         this.addHerd(baseX + 30 + rnd(5001) * (CS - 60), baseZ + 30 + rnd(5002) * (CS - 60), herd, 'sheep', seed + 5010, objects);
       }

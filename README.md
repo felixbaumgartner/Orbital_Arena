@@ -23,6 +23,7 @@ A multiplayer flight-combat game over an endless, living Dutch landscape: tulip 
 - Energy flight model (dive to gain speed, climb and turn to lose it, stalls), propeller and wind audio, church bells on captures
 - A bounded arena inside a dike: the Great Canal, a cathedral spire, a six-turbine gauntlet, coastal lighthouses; the world affects combat (treeline stealth, storms and night change vision)
 - Cosmetic unlocks by level: paint schemes, contrail colours and a stork wingman
+- Aircraft and windmill models built procedurally in Blender (via the Blender MCP) and loaded as glTF: three distinct plane classes with spinning propellers, a Dutch smock mill with turning sails. Source: `src/client/assets/models`, Blender scene in Documents/Miscellaneous/blender-mcp-setup
 
 ## Getting Started
 

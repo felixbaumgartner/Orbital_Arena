@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { io } from 'socket.io-client';
 import { TextureFactory } from './scenery/textures.js';
 import { SkySystem } from './scenery/sky.js';
@@ -323,6 +324,10 @@ class Game {
     this.cosmetics = { paint: 'classic', trail: 'white', stork: false };
     this.stork = null;
 
+    // Blender-built models (glTF), loaded at start; primitives are the fallback
+    this.models = {};
+    this.modelsReady = false;
+
     // Story: radio chatter, lore already told
     this.chatter = null;
     this.millLoreSeen = new Set();
@@ -363,6 +368,7 @@ class Game {
     // Procedural textures and the shared materials every chunk reuses
     this.textures = new TextureFactory(this.renderer.capabilities.getMaxAnisotropy());
     this.mats = createSharedMaterials(this.textures);
+    this.loadModels();
 
     // Filmic tone mapping: the single biggest "AAA look" switch — rich
     // saturated mids, soft highlight rolloff instead of clipping
@@ -444,6 +450,55 @@ class Game {
       const el = document.getElementById('build-stamp');
       if (el) el.textContent = `Build ${stamp}`;
     } catch (e) { /* ignore */ }
+  }
+
+  /**
+   * Loads the aircraft and windmill built in Blender. Each file is small;
+   * anything created before it arrives falls back to the primitive builders.
+   */
+  loadModels() {
+    const loader = new GLTFLoader();
+    const files = {
+      interceptor: 'assets/models/plane_interceptor.glb',
+      bomber: 'assets/models/plane_bomber.glb',
+      scout: 'assets/models/plane_scout.glb',
+      windmill: 'assets/models/windmill.glb',
+    };
+    let pending = Object.keys(files).length;
+    for (const [key, url] of Object.entries(files)) {
+      loader.load(url, (gltf) => {
+        const root = gltf.scene;
+        root.traverse((c) => {
+          if (!c.isMesh) return;
+          c.castShadow = true;
+          c.receiveShadow = true;
+          if (c.material && c.material.name === 'Glass') {
+            c.material.transparent = true;
+            c.material.opacity = 0.55;
+            c.material.depthWrite = false;
+          }
+        });
+        this.models[key] = root;
+        if (--pending === 0) {
+          this.modelsReady = true;
+          this.refreshWindmillModels();
+        }
+      }, undefined, (err) => {
+        console.warn('Model failed to load, using primitives:', url, err);
+        if (--pending === 0) this.modelsReady = true;
+      });
+    }
+  }
+
+  /** Deep clone with per-instance materials so colours can differ per plane */
+  cloneModel(key) {
+    const src = this.models[key];
+    if (!src) return null;
+    const clone = src.clone(true);
+    clone.traverse((c) => {
+      if (c.isMesh && c.material) c.material = c.material.clone();
+    });
+    return clone;
   }
 
   onSettingsChange(key, value, settings) {
@@ -1647,6 +1702,8 @@ class Game {
           a.mesh.rotation.y = t * 0.8;
         } else if (a.type === 'turbine') {
           a.mesh.rotation.z += delta * (0.5 + this.wind.speed * 0.09);
+        } else if (a.type === 'sails') {
+          a.mesh.rotation.z += delta * (0.25 + this.wind.speed * 0.03);
         } else if (a.type === 'car') {
           a.pos += a.dir * a.speed * delta;
           if (a.pos > a.max) a.pos = a.min;
@@ -1685,6 +1742,18 @@ class Game {
   }
 
   addWindmill(wx, wz, objects, colliders) {
+    if (this.models.windmill) {
+      const model = this.cloneModel('windmill');
+      model.position.set(wx, 0, wz);
+      model.rotation.y = this.seededRandom(wx * 13 + wz * 7) * Math.PI * 2;
+      let sails = null;
+      model.traverse((c) => { if (c.name === 'Sails') sails = c; });
+      this.scene.add(model);
+      objects.push(model);
+      if (sails) this.registerAmbient('static', { mesh: sails, type: 'sails' });
+      colliders.push({ x: wx, z: wz, radius: 7, topY: 36 });
+      return;
+    }
     const towerGeo = new THREE.CylinderGeometry(3, 4, 25, 8);
     const towerMat = new THREE.MeshStandardMaterial({ color: 0xF5F5DC, roughness: 0.6 });
     const tower = new THREE.Mesh(towerGeo, towerMat);
@@ -2124,6 +2193,28 @@ class Game {
     }
   }
 
+  /** Replaces primitive capture-mill towers with the Blender smock mill */
+  refreshWindmillModels() {
+    if (!this.models.windmill) return;
+    for (const [, mill] of this.captureWindmills) {
+      if (mill.modelled) continue;
+      const model = this.cloneModel('windmill');
+      if (!model) return;
+      model.scale.setScalar(1.15);
+      let sails = null;
+      model.traverse((c) => { if (c.name === 'Sails') sails = c; });
+      // hide the primitive tower, cap and blades; keep ring, wall, beacon
+      for (const child of [...mill.group.children]) {
+        if (child === mill.ring || child === mill.wall || child === mill.beacon) continue;
+        mill.group.remove(child);
+      }
+      mill.group.add(model);
+      mill.bladesGroup = sails || mill.bladesGroup;
+      mill.beacon.position.y = 36;
+      mill.modelled = true;
+    }
+  }
+
   updateCaptureWindmills(delta) {
     const ship = this.localPlayer ? this.players.get(this.localPlayer.id) : null;
     let nearestMill = null;
@@ -2463,6 +2554,10 @@ class Game {
     const paint = cosmetics && PAINTS[cosmetics.paint];
     if (paint && paint.body !== null) { color = paint.body; }
     const accent = paint && paint.accent !== null ? paint.accent : color;
+
+    const modelled = this.createModelledShip(color, accent, plane);
+    if (modelled) return modelled;
+
     const planeGroup = new THREE.Group();
     // Class silhouettes: the bomber is broad and heavy, the interceptor slim
     if (plane === 'bomber') planeGroup.scale.set(1.3, 1.15, 1.2);
@@ -2599,6 +2694,53 @@ class Game {
     const glow = new THREE.Sprite(this.tracerGlowMat);
     glow.scale.set(2.6, 2.6, 1);
     group.add(glow);
+    return group;
+  }
+
+  /**
+   * A plane from the Blender models: Body takes the team/paint colour,
+   * Accent the trim, propellers spin, and nav lights ride the wingtips.
+   */
+  createModelledShip(color, accent, plane) {
+    const key = ['interceptor', 'bomber', 'scout'].includes(plane) ? plane : 'scout';
+    const model = this.cloneModel(key);
+    if (!model) return null;
+    const group = new THREE.Group();
+    group.rotation.order = 'YXZ';
+    group.userData.plane = plane;
+    group.userData.props = [];
+    const bodyColor = new THREE.Color(color);
+    const accentColor = new THREE.Color(accent);
+    model.traverse((c) => {
+      // Only the propeller root (a multi-material prop exports as a group with 'Prop_x_1' children)
+      if (c.name.startsWith('Prop') && !(c.parent && c.parent.name.startsWith('Prop'))) group.userData.props.push(c);
+      if (!c.isMesh || !c.material) return;
+      const n = c.material.name;
+      if (n === 'Body') {
+        c.material.color.copy(bodyColor);
+        c.material.metalness = 0.35;
+        c.material.roughness = 0.4;
+      } else if (n === 'Accent') {
+        c.material.color.copy(accentColor);
+        c.material.emissive = accentColor.clone().multiplyScalar(0.25);
+        c.material.metalness = 0.3;
+        c.material.roughness = 0.45;
+      }
+    });
+    group.add(model);
+
+    // Wingtip nav lights (red left, green right) and a white tail light
+    const span = key === 'bomber' ? 9.4 : key === 'scout' ? 7.2 : 6.4;
+    const wingY = key === 'scout' ? 1.15 : -0.3;
+    const wingZ = key === 'bomber' ? -0.6 : key === 'scout' ? -1.2 : -1.0;
+    const mk = (hex, x, y, z) => {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.16, 6, 6),
+        new THREE.MeshStandardMaterial({ color: hex, emissive: hex, emissiveIntensity: 1.5 }));
+      m.position.set(x, y, z);
+      group.add(m);
+      return m;
+    };
+    group.userData.navLights = [mk(0xff3030, -span, wingY, wingZ), mk(0x30ff60, span, wingY, wingZ), mk(0xffffff, 0, 1.4, key === 'bomber' ? 6.2 : 4.4)];
     return group;
   }
 
@@ -4043,6 +4185,10 @@ class Game {
       const blinkIntensity = 0.8 + Math.sin(this.animationTime * 5) * 0.7;
       ship.userData.navLights.forEach(light => { light.material.emissiveIntensity = blinkIntensity; });
     }
+    if (ship.userData.props) {
+      const rpm = 12 + speed * 0.35;
+      for (const p of ship.userData.props) p.rotation.z += rpm * delta;
+    }
 
     this.checkCollisions(ship);
     this.updateFlightInstruments(ship, speed, delta);
@@ -5342,6 +5488,9 @@ class Game {
         if (ship.userData.navLights) {
           const b = 0.8 + Math.sin(this.animationTime * 5 + id.length * 0.5) * 0.7;
           ship.userData.navLights.forEach(light => { light.material.emissiveIntensity = b; });
+        }
+        if (ship.userData.props) {
+          for (const p of ship.userData.props) p.rotation.z += 30 * delta;
         }
         // Update contrail for other players (skip while shot down/hidden)
         if (ship.visible) this.updateTrail(id, ship.position);

@@ -25,10 +25,11 @@ export class ProgressionMethods {
     const now = this.animationTime;
     this.streak++;
     this.addPopup(100, 'KILL');
+    if (this.killTimes.filter(t => now - t < 4).length < 2) this.radioLine('targetDestroyed', 14);
     this.killTimes = this.killTimes.filter(t => now - t < 4).concat(now);
     const burst = this.killTimes.length;
     if (burst === 2) this.awardMedal('✌️', 'DOUBLE KILL', 'Two down in four seconds', 100);
-    else if (burst >= 3) this.awardMedal('🔱', 'TRIPLE KILL', 'Three down in four seconds', 200);
+    else if (burst >= 3) { this.awardMedal('🔱', 'TRIPLE KILL', 'Three down in four seconds', 200); this.announce('multiKill'); }
     if (this.matchKills === 0) this.awardMedal('🩸', 'FIRST BLOOD', 'First kill of the match', 50);
     if (data.targetId && data.targetId === this.lastKilledBy) {
       this.awardMedal('😤', 'REVENGE', `Payback on ${this.nameOf(data.targetId)}`, 50);

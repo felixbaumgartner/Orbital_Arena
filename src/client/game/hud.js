@@ -165,6 +165,7 @@ export class HudMethods {
         this.calloutsDone.add('final');
         this.instruments.toast('⏱️', 'Final 30 seconds!', standing);
         this.playSound('warning');
+        this.announce('hurryUp');
       }
     }
   }
@@ -183,7 +184,10 @@ export class HudMethods {
     if (n !== this.countdownLast) {
       this.countdownLast = n;
       this.instruments.setCountdown(n === 'GO!' ? 'FIGHT' : 'MATCH STARTS IN', n);
-      this.playSound(n === 'GO!' ? 'go' : 'tick');
+      // The announcer counts the last three down and calls the fight
+      if (n === 'GO!') { this.announce('fight'); this.playSound('go'); }
+      else if (n <= 3) this.announce(['one', 'two', 'three'][n - 1]);
+      else this.playSound('tick');
     }
   }
 
@@ -251,6 +255,7 @@ export class HudMethods {
 
   handleLocalDeath(attackerName) {
     this.dead = true;
+    if (this.audio) this.audio.setMuffle(0.8, 0.8);
     const overlay = document.getElementById('crash-overlay');
     const sub = document.getElementById('crash-sub');
     if (overlay) {
@@ -381,6 +386,14 @@ export class HudMethods {
     this.bankXp();
     const after = before + this.sessionXp;
     const xpEl = document.getElementById('end-xp');
+    // The announcer calls it; a flawless win (no deaths) gets the special line
+    const won = !!winner && winner === myTeam;
+    if (!winner) this.announce('tie');
+    else if (won && !(this.localPlayer?.deaths)) this.announce('flawless');
+    else this.announce(won ? 'youWin' : 'youLose');
+    this.stinger(won ? 'victory' : 'defeat');
+    if (this.audio) { this.audio.music.resetCalm(); this.audio.setMuffle(0); }
+    if (this.levelFor(after) > this.levelFor(before)) setTimeout(() => { this.announce('levelUp'); this.stinger('levelUp'); }, 2600);
     if (xpEl) {
       const lvBefore = this.levelFor(before), lvAfter = this.levelFor(after);
       const unlocked = this.unlocksBetween(lvBefore, lvAfter);

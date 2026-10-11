@@ -670,6 +670,15 @@
 
         .setting-row select option { color: #000; }
 
+        .setting-row input[type="range"] { width: 140px; accent-color: var(--green); }
+        .setting-group {
+            margin: 1rem 0 0.2rem; font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: #90a4ae;
+            border-top: 1px solid rgba(255, 255, 255, 0.12); padding-top: 0.6rem;
+        }
+        .setting-credits { margin-top: 0.7rem; font-size: 0.68rem; line-height: 1.35; color: #78909c; }
+        .setting-credits a { color: #90caf9; }
+        #settings-panel { max-height: 88vh; overflow-y: auto; }
+
         .setting-row input[type="checkbox"] {
             width: 20px;
             height: 20px;
@@ -2159,9 +2168,31 @@
                 <label for="set-fps">Show FPS</label>
                 <input type="checkbox" id="set-fps">
             </div>
+            <div class="setting-group">Sound</div>
+            <div class="setting-row">
+                <label for="set-vol-master">Master volume</label>
+                <input type="range" id="set-vol-master" min="0" max="100" step="1">
+            </div>
+            <div class="setting-row">
+                <label for="set-vol-sfx">Effects</label>
+                <input type="range" id="set-vol-sfx" min="0" max="100" step="1">
+            </div>
+            <div class="setting-row">
+                <label for="set-vol-music">Music</label>
+                <input type="range" id="set-vol-music" min="0" max="100" step="1">
+            </div>
+            <div class="setting-row">
+                <label for="set-vol-voice">Announcer &amp; radio</label>
+                <input type="range" id="set-vol-voice" min="0" max="100" step="1">
+            </div>
             <div class="setting-hint">
                 Low disables shadows and bloom for older laptops. Ultra widens the view distance and sharpens shadows.
                 Press <span class="key">P</span> in flight for photo mode and <span class="key">C</span> to save a screenshot.
+            </div>
+            <div class="setting-credits">
+                Music: “Carefree” and “Clash Defiant” by Kevin MacLeod (incompetech.com),
+                licensed under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>.
+                Sounds and voices: Kenney (kenney.nl) and The Free Firearm Sound Library, CC0.
             </div>
             <button id="settings-close">Back to flight</button>
             <div id="build-stamp" style="margin-top:0.6rem; font-size:0.65rem; color:#607d8b; letter-spacing:0.1em; text-align:center;"></div>

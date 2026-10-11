@@ -1,7 +1,10 @@
 // Cockpit-style HUD widgets: compass tape, artificial horizon, terrain
 // warning, toasts, environment readout, settings panel, photo mode.
 
-const DEFAULT_SETTINGS = { quality: 'high', bloom: true, fps: false, time: 'auto', mouse: true, simpleHud: false, assist: true };
+const DEFAULT_SETTINGS = {
+  quality: 'high', bloom: true, fps: false, time: 'auto', mouse: true, simpleHud: false, assist: true,
+  volMaster: 0.8, volSfx: 0.9, volMusic: 0.6, volVoice: 0.9, music: true,
+};
 const STORAGE_KEY = 'dvf.settings.v1';
 
 export class Instruments {
@@ -97,6 +100,13 @@ export class Instruments {
     if (bloom) bloom.addEventListener('change', () => change('bloom', bloom.checked));
     if (fps) fps.addEventListener('change', () => change('fps', fps.checked));
     if (time) time.addEventListener('change', () => change('time', time.value));
+    // Volume sliders (0-100 in the UI, 0-1 in settings)
+    for (const [key, id] of [['volMaster', 'set-vol-master'], ['volSfx', 'set-vol-sfx'], ['volMusic', 'set-vol-music'], ['volVoice', 'set-vol-voice']]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.value = String(Math.round((this.settings[key] ?? 0.8) * 100));
+      el.addEventListener('input', () => change(key, Number(el.value) / 100));
+    }
     if (close) close.addEventListener('click', () => this.toggleSettings(false));
   }
 

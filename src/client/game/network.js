@@ -127,6 +127,7 @@ export class NetworkMethods {
         const total = data.gameState.rules?.matchDuration || 300000;
         if (typeof data.gameState.timeRemaining === 'number' && data.gameState.timeRemaining > total) {
           this.countdownEndsAt = performance.now() + (data.gameState.timeRemaining - total);
+          this.announce(data.gameState.suddenDeath ? 'suddenDeath' : `round${data.gameState.round || 1}`);
         }
 
         // Late join: say so, and explain how points are scored
@@ -332,6 +333,7 @@ export class NetworkMethods {
             : Math.max(0, this.playerHealth - data.damage);
           this.setHealthBar(this.playerHealth);
           this.playSound(data.killed ? 'explosion' : 'hit');
+          if (!data.killed && this.playerHealth / (this.playerMaxHealth || 100) < 0.3) this.radioLine('coverMe', 40);
           this.shake(data.killed ? 1.2 : 0.35, data.killed ? 0.8 : 0.3);
           if (data.killed) this.handleLocalDeath(this.nameOf(data.attackerId));
         }
@@ -374,6 +376,7 @@ export class NetworkMethods {
         }
         if (data.playerId === this.localPlayer?.id) {
           this.dead = false;
+          if (this.audio) this.audio.setMuffle(0, 0.6);
           this.streak = 0;
           if (ship) this.faceNearestEnemy(ship);
           clearInterval(this.respawnTicker);
@@ -427,7 +430,7 @@ export class NetworkMethods {
             if (prev && prev.team !== mill.team && mill.team === myTeam) {
               const ship = this.players.get(this.localPlayer.id);
               const inside = ship && Math.hypot(ship.position.x - mill.x, ship.position.z - mill.z) <= GAME_CONFIG.CAPTURE_RADIUS;
-              if (inside) this.addPopup(150, 'CAPTURE');
+              if (inside) { this.addPopup(150, 'CAPTURE'); this.announce('objective'); }
               else this.addPopup(50, 'TEAM CAPTURE');
             }
             this.windmillStates[mill.id] = mill;
@@ -443,7 +446,10 @@ export class NetworkMethods {
           this.radio(d.winner, 'win', null, true);
           setTimeout(() => this.radio(d.winner === 'red' ? 'blue' : 'red', 'lose', null, true), 3500);
         }
-        if (!d.final) this.showIntermission(d);
+        if (!d.final) {
+          this.showIntermission(d);
+          if (d.winner) this.stinger(d.winner === this.localPlayer?.team ? 'roundWin' : 'roundLose');
+        }
         this.controls.shooting = false;
       });
       socket.on('roundStart', (d) => {
@@ -462,6 +468,7 @@ export class NetworkMethods {
         this.updateHUD();
         this.applyModeHud();
         const acts = ['Act I · The opening ceremony', 'Act II · The long afternoon', 'Act III · The last light'];
+        this.announce(this.suddenDeath ? 'suddenDeath' : d.round >= (d.maxRounds || 3) ? 'finalRound' : `round${d.round}`);
         this.instruments.toast(this.suddenDeath ? '🔥' : '🏁', acts[d.round - 1] || `Round ${d.round}`,
           this.suddenDeath ? 'The bells ring at sundown · windmills score double' : `Round ${d.round} of ${d.maxRounds} · fresh windmills, fresh scores`);
       });

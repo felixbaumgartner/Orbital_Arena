@@ -20,7 +20,7 @@ import { WindmillMethods } from './game/windmills.js';
 import { AirfieldMethods } from './game/airfield.js';
 import { ShipMethods } from './game/ships.js';
 import { NetworkMethods } from './game/network.js';
-import { LegacyAudioMethods } from './game/audio-legacy.js';
+import { AudioMethods } from './game/audio.js';
 import { HudMethods } from './game/hud.js';
 import { InputMethods } from './game/input.js';
 import { FlightMethods } from './game/flight.js';
@@ -368,6 +368,7 @@ class Game {
 
   onSettingsChange(key, value, settings) {
     this.applySettings(settings);
+    if (key.startsWith('vol') || key === 'music') this.applyAudioSettings(settings);
     if (key === 'quality') this.instruments.toast('⚙️', `Graphics: ${value}`, 'Applied');
   }
 
@@ -442,6 +443,11 @@ class Game {
       hud.style.display = 'block';
     };
     startButton.addEventListener('click', start);
+    // Browsers only allow sound after a gesture: the first click or key on
+    // the login screen starts the engine and the menu music
+    const firstGesture = () => this.initAudio();
+    document.addEventListener('pointerdown', firstGesture, { once: true });
+    document.addEventListener('keydown', firstGesture, { once: true });
 
     // Remember the pilot; "Fly Again" skips the login screen entirely
     try {
@@ -688,6 +694,8 @@ class Game {
     this.updateStork(delta);
     this.updateEnvironment(delta);
 
+    this.updateAudio(this.realDelta);
+
     if (this.postfx) this.postfx.render();
     else this.renderer.render(this.scene, this.camera);
 
@@ -718,7 +726,7 @@ class Game {
 }
 
 // Mix every method group into Game (own methods win on name clashes)
-for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, LegacyAudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods]) {
+for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, AudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods]) {
   for (const name of Object.getOwnPropertyNames(mixin.prototype)) {
     if (name === 'constructor' || Object.prototype.hasOwnProperty.call(Game.prototype, name)) continue;
     Object.defineProperty(Game.prototype, name, Object.getOwnPropertyDescriptor(mixin.prototype, name));

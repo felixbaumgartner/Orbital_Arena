@@ -32,6 +32,7 @@ import { WeaponMethods } from './game/weapons.js';
 import { ReplayMethods } from './game/replay.js';
 import { CameraMethods } from './game/camera.js';
 import { GamepadMethods } from './game/gamepad.js';
+import { CareerMethods } from './game/career.js';
 
 class Game {
   constructor() {
@@ -223,6 +224,7 @@ class Game {
     this.initWeaponState();
     this.initReplay();
     this.initGamepad();
+    this.initCareer();
     this.init();
 
     // Debug handle (also used by automated QA)
@@ -482,6 +484,7 @@ class Game {
         rankEl.textContent = `Lv ${this.levelFor(xp)} · ${this.rankFor(xp)} · ${xp.toLocaleString()} XP`;
       }
       this.setupHangar();
+      this.setupCareerPanel();
       if (localStorage.getItem('dvf.autoStart') === '1' && saved) {
         localStorage.removeItem('dvf.autoStart');
         setTimeout(start, 50);
@@ -753,7 +756,7 @@ class Game {
 }
 
 // Mix every method group into Game (own methods win on name clashes)
-for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, AudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods, WeaponMethods, ReplayMethods, CameraMethods, GamepadMethods]) {
+for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, AudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods, WeaponMethods, ReplayMethods, CameraMethods, GamepadMethods, CareerMethods]) {
   for (const name of Object.getOwnPropertyNames(mixin.prototype)) {
     if (name === 'constructor' || Object.prototype.hasOwnProperty.call(Game.prototype, name)) continue;
     Object.defineProperty(Game.prototype, name, Object.getOwnPropertyDescriptor(mixin.prototype, name));

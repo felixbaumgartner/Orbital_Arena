@@ -15,6 +15,7 @@ export class ProgressionMethods {
 
   awardMedal(icon, title, sub, points) {
     this.medalsEarned.push(title);
+    this.careerEvent('medals');
     this.instruments.medal(icon, title, sub);
     if (points) this.addPopup(points, title);
     this.playSound('medal');
@@ -28,6 +29,12 @@ export class ProgressionMethods {
     if (this.killTimes.filter(t => now - t < 4).length < 2) this.radioLine('targetDestroyed', 14);
     this.killTimes = this.killTimes.filter(t => now - t < 4).concat(now);
     const burst = this.killTimes.length;
+    // Career record and daily challenges
+    this.careerEvent('kills');
+    if (data.weapon === 'missile') this.careerEvent('missileKills');
+    if (data.weapon === 'bomb') this.careerEvent('bombKills');
+    if (burst === 2) this.careerEvent('multiKills');
+    this.careerEvent('bestStreak', this.streak);
     if (burst === 2) this.awardMedal('✌️', 'DOUBLE KILL', 'Two down in four seconds', 100);
     else if (burst >= 3) { this.awardMedal('🔱', 'TRIPLE KILL', 'Three down in four seconds', 200); this.announce('multiKill'); }
     if (this.matchKills === 0) this.awardMedal('🩸', 'FIRST BLOOD', 'First kill of the match', 50);
@@ -39,6 +46,7 @@ export class ProgressionMethods {
     const victim = this.players.get(data.targetId);
     if (me && victim && !data.airstrike && me.position.distanceTo(victim.position) > 170) {
       this.awardMedal('🎯', 'LONG SHOT', `${Math.round(me.position.distanceTo(victim.position) * 3)} m`, 75);
+      this.careerEvent('longShots');
     }
     if (this.deathsSinceKill >= 3) this.awardMedal('💪', 'COMEBACK', 'Back in the fight', 50);
     this.deathsSinceKill = 0;

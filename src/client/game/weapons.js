@@ -104,6 +104,7 @@ export class WeaponMethods {
         this.incomingMissiles.delete(d.id);
         this.instruments.toast('🎆', 'Missile decoyed', 'The flares took it');
         this.addPopup(25, 'EVADED');
+        this.careerEvent('evades');
       }
     });
     socket.on('missileExplode', (d) => this.onMissileExplode(d));
@@ -271,7 +272,10 @@ export class WeaponMethods {
       if (ours) {
         this.instruments.toast('💣', d.neutralized ? `${name} mill knocked out!` : `Direct hit on ${name} mill`,
           d.neutralized ? 'Their hold is broken: fly in and take it' : 'Their hold is shaken');
-        if (d.ownerId === this.localPlayer?.id) this.addPopup(d.neutralized ? 150 : 75, d.neutralized ? 'MILL KNOCKED OUT' : 'MILL HIT');
+        if (d.ownerId === this.localPlayer?.id) {
+          this.addPopup(d.neutralized ? 150 : 75, d.neutralized ? 'MILL KNOCKED OUT' : 'MILL HIT');
+          this.careerEvent('millBombs');
+        }
       } else {
         this.instruments.toast('⚠️', `${name} mill bombed`, d.neutralized ? 'We lost it: retake it' : 'Our hold is slipping');
       }

@@ -258,6 +258,7 @@ export class HudMethods {
   handleLocalDeath(attackerName) {
     this.dead = true;
     if (this.audio) this.audio.setMuffle(0.8, 0.8);
+    this.careerEvent('deaths');
     const overlay = document.getElementById('crash-overlay');
     const sub = document.getElementById('crash-sub');
     if (overlay) {
@@ -396,6 +397,8 @@ export class HudMethods {
     this.stinger(won ? 'victory' : 'defeat');
     if (this.audio) { this.audio.music.resetCalm(); this.audio.setMuffle(0); }
     if (this.levelFor(after) > this.levelFor(before)) setTimeout(() => { this.announce('levelUp'); this.stinger('levelUp'); }, 2600);
+    // Career record, daily challenges and the server-side pilot record
+    this.onCareerMatchEnd(won);
     if (xpEl) {
       const lvBefore = this.levelFor(before), lvAfter = this.levelFor(after);
       const unlocked = this.unlocksBetween(lvBefore, lvAfter);

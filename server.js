@@ -70,6 +70,7 @@ httpServer.listen(PORT, () => {
   Environment: ${process.env.NODE_ENV || 'development'}
   Max players per game: ${GAME_CONFIG.PLAYERS_PER_GAME}
   Match duration: ${GAME_CONFIG.MATCH_DURATION / 1000}s
+  Pilot records: ${require('./lib/persistence').BACKEND}
 ═══════════════════════════════════════
   `);
 });

@@ -73,6 +73,7 @@ export class NetworkMethods {
       plane: this.localPlayer ? this.planeClass : this.pendingPlane,
       cosmetics: this.cosmetics,
       sessionId: this.sessionId,
+      pilot: this.pilot ? { id: this.pilot.id, secret: this.pilot.secret } : undefined,
     };
     if (resume && this.localPlayer && this.gameState) {
       payload.resume = { gameId: this.gameState.id, snapshot: this.resumeSnapshot() };
@@ -98,6 +99,9 @@ export class NetworkMethods {
       socket.on('hb', (d) => {
         if (d && typeof d.timeRemaining === 'number' && d.phase === 'live') this.syncTimer(d.timeRemaining);
       });
+
+      // The server saved a finished match to our pilot record
+      socket.on('profileUpdated', (r) => this.onProfileUpdated(r));
 
       // Missiles, flares and bombs
       this.bindWeaponEvents(socket);
@@ -447,7 +451,7 @@ export class NetworkMethods {
             if (prev && prev.team !== mill.team && mill.team === myTeam) {
               const ship = this.players.get(this.localPlayer.id);
               const inside = ship && Math.hypot(ship.position.x - mill.x, ship.position.z - mill.z) <= GAME_CONFIG.CAPTURE_RADIUS;
-              if (inside) { this.addPopup(150, 'CAPTURE'); this.announce('objective'); }
+              if (inside) { this.addPopup(150, 'CAPTURE'); this.announce('objective'); this.careerEvent('captures'); }
               else this.addPopup(50, 'TEAM CAPTURE');
             }
             this.windmillStates[mill.id] = mill;
@@ -459,6 +463,7 @@ export class NetworkMethods {
       socket.on('roundEnd', (d) => {
         if (!d) return;
         this.roundWins = d.roundWins || this.roundWins;
+        if (d.winner && d.winner === this.localPlayer?.team) this.careerEvent('roundsWon');
         if (d.winner) {
           this.radio(d.winner, 'win', null, true);
           setTimeout(() => this.radio(d.winner === 'red' ? 'blue' : 'red', 'lose', null, true), 3500);

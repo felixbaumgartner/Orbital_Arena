@@ -9,6 +9,7 @@ const BUILD = `${gitHash}-${Date.now().toString(36)}`;
 export default defineConfig({
   root: 'src/client',
   publicDir: 'static',           // models, sounds and music, copied as-is
+  envDir: '../..',               // read .env from the repo root (VITE_* vars)
   base: './',                    // relative URLs work on Express and Vercel alike
   define: { __BUILD__: JSON.stringify(BUILD) },
   build: {

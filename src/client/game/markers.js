@@ -143,29 +143,8 @@ export class MarkerMethods {
 
   /** Small impact burst where a bullet struck a plane */
   spawnHitSpark(position) {
-    const flash = new THREE.Mesh(
-      new THREE.SphereGeometry(0.9, 6, 6),
-      new THREE.MeshBasicMaterial({ color: 0xFFF2A0, transparent: true, opacity: 0.95 })
-    );
-    flash.position.copy(position);
-    flash.userData = { vel: new THREE.Vector3(), life: 0.14, maxLife: 0.14, isFlash: true };
-    this.scene.add(flash);
-    this.smokeParticles.push(flash);
-    for (let i = 0; i < 7; i++) {
-      const p = new THREE.Mesh(
-        new THREE.SphereGeometry(0.22, 4, 4),
-        new THREE.MeshBasicMaterial({ color: i % 2 ? 0xFF8A2A : 0xFFD070, transparent: true, opacity: 0.95 })
-      );
-      p.position.copy(position);
-      const a = Math.random() * Math.PI * 2, b = (Math.random() - 0.5) * Math.PI;
-      const spd = 10 + Math.random() * 14;
-      p.userData = {
-        vel: new THREE.Vector3(Math.cos(a) * Math.cos(b) * spd, Math.sin(b) * spd + 3, Math.sin(a) * Math.cos(b) * spd),
-        life: 0.25 + Math.random() * 0.2, maxLife: 0.45, grav: true,
-      };
-      this.scene.add(p);
-      this.smokeParticles.push(p);
-    }
+    this.fx.hitSpark(position);
+    this.playSound('bullet-hit', position);
   }
 
   /**

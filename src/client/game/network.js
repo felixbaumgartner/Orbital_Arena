@@ -262,6 +262,8 @@ export class NetworkMethods {
           this.orientProjectile(projectile);
           this.scene.add(projectile);
           this.projectiles.set(data.projectileId, projectile);
+          this.fx.muzzleFlash(projectile.position);
+          this.playSound('shot-remote', projectile.position);
         }
       });
 
@@ -279,8 +281,12 @@ export class NetworkMethods {
         const victimShip = this.players.get(data.targetId);
         if (data.airstrike && victimShip) this.spawnExplosion(victimShip.position);
         if (data.killed && victimShip) {
-          this.spawnExplosion(victimShip.position);
+          // The plane blows up and breaks apart, carrying its momentum down
+          const vel = this.shipVelocity(data.targetId);
+          this.spawnExplosion(victimShip.position, vel);
+          this.spawnWreck(victimShip, vel);
           victimShip.visible = false;
+          this.onKillEvent?.(data);
         }
 
         // Radio: the cast reacts to kills involving you

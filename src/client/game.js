@@ -11,6 +11,8 @@ import { TouchControls } from './ui/touch.js';
 import { createSharedMaterials, createHorizonRing } from './scenery/props.js';
 import { Chatter } from './ui/chatter.js';
 import { GAME_CONFIG } from './config.js';
+import { FX } from './fx/effects';
+import { Wreckage } from './fx/wreckage';
 import { TerrainMethods } from './game/terrain.js';
 import { EffectsMethods } from './game/effects.js';
 import { WeatherMethods } from './game/weather.js';
@@ -211,6 +213,7 @@ class Game {
     this.radarSweepUntil = 0;
     this.calloutsDone = new Set();
     this.xpBanked = false;
+    this.timeScale = 1;          // world speed (slow motion < 1)
 
     this.init();
 
@@ -270,6 +273,11 @@ class Game {
     const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x5B8C3E, 0.55);
     this.scene.add(hemiLight);
     this.hemiLight = hemiLight;
+
+    // Pooled particles (explosions, smoke, sparks) and breaking-apart wrecks
+    this.fx = new FX(this.scene);
+    this.wreckage = new Wreckage(this.scene, this.fx);
+    this.wreckage.onImpact = (at, kind) => this.onWreckImpact(at, kind);
 
     // Sky, clouds and the far horizon
     this.sky = new SkySystem(this.scene, this.textures, {
@@ -398,6 +406,7 @@ class Game {
     if (this.clouds) this.clouds.setDensity(p.clouds);
     if (this.cloudShadow) this.cloudShadow.visible = p.cloudShadow;
     if (this.sky) this.sky.setTimeMode(settings.time || 'auto');
+    if (this.fx) this.fx.setQuality(settings.quality);
   }
 
   setupUI() {
@@ -580,12 +589,16 @@ class Game {
   animate() {
     requestAnimationFrame(this.animate.bind(this));
     // Clamp delta so a backgrounded tab doesn't teleport the plane on return
-    const delta = Math.min(this.clock.getDelta(), 0.1);
+    // timeScale < 1 is slow motion (kill cam, final kill); realDelta keeps UI timing honest
+    const realDelta = Math.min(this.clock.getDelta(), 0.1);
+    const delta = realDelta * this.timeScale;
+    this.realDelta = realDelta;
     this.animationTime += delta;
 
     // Global systems (always update)
     this.updateWeather(delta);
     this.updateSmokeParticles(delta);
+    this.updateRemoteDamageSmoke(delta);
     this.updateCaptureWindmills(delta);
     this.updateAmbient(delta);
     this.updateTimer();

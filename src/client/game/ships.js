@@ -245,6 +245,7 @@ export class ShipMethods {
     this.scene.add(projectile);
     this.projectiles.set(projectileId, projectile);
     this.playSound('shot');
+    this.fx.muzzleFlash(projectile.position);
     this.shake(0.05, 0.07); // recoil kick
 
     if (this.socket && this.isConnected) {

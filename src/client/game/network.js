@@ -212,6 +212,7 @@ export class NetworkMethods {
         const ship = this.players.get(playerId);
         if (ship) {
           this.scene.remove(ship);
+          this.releaseShip(ship);
           this.players.delete(playerId);
           this.removeTrail(playerId);
         }
@@ -339,6 +340,7 @@ export class NetworkMethods {
             : Math.max(0, this.playerHealth - data.damage);
           this.setHealthBar(this.playerHealth);
           this.playSound(data.killed ? 'explosion' : 'hit');
+          this.hitAberration = 1;
           if (!data.killed && this.playerHealth / (this.playerMaxHealth || 100) < 0.3) this.radioLine('coverMe', 40);
           this.shake(data.killed ? 1.2 : 0.35, data.killed ? 0.8 : 0.3);
           if (data.killed) this.handleLocalDeath(this.nameOf(data.attackerId));
@@ -657,6 +659,7 @@ export class NetworkMethods {
     for (const [id, ship] of [...this.players]) {
       if (id === newId || roster.has(id)) continue;
       this.scene.remove(ship);
+      this.releaseShip(ship);
       this.players.delete(id);
       this.removeTrail(id);
     }

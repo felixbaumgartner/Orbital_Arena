@@ -128,6 +128,46 @@ export class EffectsMethods {
   }
 
   /**
+   * Feeds the cinematic pass each frame: where the sun is on screen and how
+   * strong its rays should be, speed blur from airspeed, and a colour split
+   * when hit or nearly shot down.
+   */
+  updateCinematicFX(realDelta) {
+    if (!this.postfx || !this.postfx.setCinematic || !this.sky) return;
+    const sky = this.sky.state;
+    const cam = this.camera;
+    const fwd = this._cfxFwd || (this._cfxFwd = new THREE.Vector3());
+    const p = this._cfxSun || (this._cfxSun = new THREE.Vector3());
+    cam.getWorldDirection(fwd);
+    const facing = fwd.dot(sky.sunDir);
+    let sunUv = null, sunStrength = 0;
+    if (facing > 0.05 && sky.sunDir.y > -0.02) {
+      p.copy(cam.position).addScaledVector(sky.sunDir, 400).project(cam);
+      if (p.z < 1) {
+        sunUv = { x: p.x * 0.5 + 0.5, y: p.y * 0.5 + 0.5 };
+        // Fade as the sun leaves the frame; strongest low in the sky
+        const off = Math.max(Math.abs(p.x), Math.abs(p.y));
+        const inFrame = Math.max(0, Math.min(1, (1.6 - off) / 0.8));
+        const low = 1 + Math.max(0, 0.5 - sky.sunDir.y) * 0.8;
+        sunStrength = 0.55 * sky.daylight * (1 - (this.weatherNow?.overcast || 0) * 0.9) * inFrame * low * Math.min(1, facing * 2);
+      }
+    }
+    // Speed blur when diving or boosting hard (never in replays or photo mode)
+    const alive = this.localPlayer && !this.dead && this.controlsEnabled && !this.replay && !this.photoMode;
+    const boosting = alive && this.controls.boost && this.localPlayer.energy > 0;
+    const target = alive ? Math.max(0, Math.min(1, (this.airspeed - 80) / 50)) * (boosting ? 1 : 0.75) : 0;
+    this.speedBlurAmt = (this.speedBlurAmt || 0) + (target - (this.speedBlurAmt || 0)) * Math.min(1, realDelta * 4);
+    // A jolt of aberration when hit, and a pulse when nearly down
+    this.hitAberration = Math.max(0, (this.hitAberration || 0) - realDelta * 2.5);
+    const max = this.playerMaxHealth || 100;
+    const low = alive && this.playerHealth / max < 0.3 ? 0.35 + 0.25 * Math.sin(this.animationTime * 5) : 0;
+    this.postfx.setCinematic({
+      sunUv, sunStrength, sunColor: sky.sunColor,
+      speed: this.speedBlurAmt, damage: Math.max(low, this.hitAberration),
+    });
+  }
+
+  /**
    * Kicks off a decaying camera shake (magnitude in world units)
    */
   shake(magnitude, duration) {

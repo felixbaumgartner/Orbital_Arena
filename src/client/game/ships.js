@@ -140,6 +140,11 @@ export class ShipMethods {
     planeGroup.traverse(child => {
       if (child.isMesh) child.castShadow = true;
     });
+    if (this.envProbe) {
+      this.envProbe.register(mainMat, 0.8);
+      this.envProbe.register(chromeMat, 1.2);
+      this.envProbe.register(canopyMat, 1.1);
+    }
 
     return planeGroup;
   }
@@ -194,6 +199,9 @@ export class ShipMethods {
         c.material.metalness = 0.3;
         c.material.roughness = 0.45;
       }
+      // Paint, chrome and canopy glass reflect the sky
+      const shine = { Body: 0.75, Accent: 0.6, Chrome: 1.2, Glass: 1.1, Dark: 0.5, Prop: 0.6 }[n];
+      if (shine && this.envProbe) this.envProbe.register(c.material, shine);
     });
     group.add(model);
 
@@ -210,6 +218,12 @@ export class ShipMethods {
     };
     group.userData.navLights = [mk(0xff3030, -span, wingY, wingZ), mk(0x30ff60, span, wingY, wingZ), mk(0xffffff, 0, 1.4, key === 'bomber' ? 6.2 : 4.4)];
     return group;
+  }
+
+  /** A plane leaving the match: stop updating its reflective materials */
+  releaseShip(ship) {
+    if (!ship || !this.envProbe) return;
+    ship.traverse((c) => { if (c.isMesh && c.material) this.envProbe.unregister(c.material); });
   }
 
   /** Points a tracer along its velocity (call once after velocity is set) */

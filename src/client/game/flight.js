@@ -459,6 +459,8 @@ export class FlightMethods {
       { sun: this.sunLight, hemi: this.hemiLight, ambient: this.ambientLight },
       this.renderer, this.animationTime);
     const sky = this.sky.state;
+    // Refresh sky reflections now and then (sunset colours, overcast)
+    if (this.envProbe) this.envProbe.update(delta, this.hemiLight ? this.hemiLight.groundColor : undefined);
     this.snapShadowFrustum();
 
     this.clouds.update(delta, center, this.wind, sky, this.weatherNow.cover);

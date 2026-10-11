@@ -13,6 +13,7 @@ import { Chatter } from './ui/chatter.js';
 import { GAME_CONFIG } from './config.js';
 import { FX } from './fx/effects';
 import { Wreckage } from './fx/wreckage';
+import { EnvProbe } from './render/envprobe';
 import { TerrainMethods } from './game/terrain.js';
 import { EffectsMethods } from './game/effects.js';
 import { WeatherMethods } from './game/weather.js';
@@ -289,6 +290,10 @@ class Game {
     });
     this.clouds = new CloudSystem(this.scene, this.textures);
     this.horizonRing = createHorizonRing(this.textures);
+    // Sky reflections for planes and water (refreshed as the sky changes)
+    this.envProbe = new EnvProbe(this.renderer, this.sky.material, this.sky.dome.geometry);
+    this.envProbe.register(this.mats.water, 0.7);
+    this.sky.dome.userData.noAO = true;
     this.scene.add(this.horizonRing);
 
     this.createInfiniteTerrain();
@@ -391,6 +396,8 @@ class Game {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.postfx.resize(window.innerWidth, window.innerHeight, p.pr);
     this.postfx.setBloom(p.bloom && settings.bloom !== false);
+    this.postfx.setQuality(settings.quality);
+    if (this.envProbe) this.envProbe.setEnabled(settings.quality !== 'low');
 
     if (this.renderer.shadowMap.enabled !== p.shadows) {
       this.renderer.shadowMap.enabled = p.shadows;
@@ -708,6 +715,7 @@ class Game {
 
     this.recordFrame(delta);
     this.updateAudio(this.realDelta);
+    this.updateCinematicFX(realDelta);
 
     if (this.postfx) this.postfx.render();
     else this.renderer.render(this.scene, this.camera);

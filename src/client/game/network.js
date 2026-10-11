@@ -714,9 +714,9 @@ export class NetworkMethods {
     }
     const ttl = this.rules.connectionTtl || 0;
     if (ttl && this.connectedAt && now - this.connectedAt > ttl) {
-      // Wait for a quiet moment, but never past the hard limit
+      // Wait for a quiet moment, but never close to the host's hard limit
       const calm = !this.dead && !this.crashed && !this.replay;
-      if (calm || now - this.connectedAt > ttl + 40000) this.handoverConnection('refresh');
+      if (calm || now - this.connectedAt > ttl + Math.min(40000, ttl * 0.22)) this.handoverConnection('refresh');
     }
   }
 

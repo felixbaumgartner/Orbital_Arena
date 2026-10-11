@@ -97,7 +97,7 @@ Without them the game keeps progress in the browser, and the login screen says s
 
 ### Hosting notes
 
-On Vercel the game server runs as a Function with WebSockets. Each connection lasts at most the function's `maxDuration` (300 s here), so clients hand over to a fresh connection after 4 minutes and resume their match. A serverless instance only holds the matches of the players connected to it, so two humans may not always land in the same match. For guaranteed shared matches, run `server.js` on an always-on host and point the client at it with `VITE_GAME_SERVER_URL`.
+On Vercel the game server runs as a Function with WebSockets. Each connection lasts at most the function's `maxDuration` (60 s on this project's plan), so clients hand over to a fresh connection every 45 seconds and resume their match without a visible break. A serverless instance only holds the matches of the players connected to it, so two humans may not always land in the same match. For guaranteed shared matches, run `server.js` on an always-on host and point the client at it with `VITE_GAME_SERVER_URL`.
 
 ## License
 

@@ -81,6 +81,9 @@ export class InputMethods {
       case 'shift': this.controls.boost = true; break;
       case ' ': this.controls.shooting = true; event.preventDefault(); break;
       case 'r': this.startBarrelRoll(); break;
+      case 'f': this.fireMissile(); break;
+      case 'g': this.deployFlares(); break;
+      case 'b': this.dropBomb(); break;
       case 'm': this.toggleMute(); break;
       case 'p': if (this.localPlayer) this.togglePhotoMode(); break;
       case 'c': this.captureRequested = true; break;

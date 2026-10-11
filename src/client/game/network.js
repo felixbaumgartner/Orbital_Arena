@@ -99,6 +99,9 @@ export class NetworkMethods {
         if (d && typeof d.timeRemaining === 'number' && d.phase === 'live') this.syncTimer(d.timeRemaining);
       });
 
+      // Missiles, flares and bombs
+      this.bindWeaponEvents(socket);
+
       socket.on('gameJoined', (data) => {
         this.gameState = data.gameState;
         this.localPlayer = data.player;
@@ -118,6 +121,8 @@ export class NetworkMethods {
         this.planeClass = data.player.plane || 'scout';
         if (this.rules.planes && this.rules.planes[this.planeClass]) this.planeStats = this.rules.planes[this.planeClass];
         this.playerMaxHealth = data.player.maxHealth || this.planeStats.maxHealth || 100;
+        if (data.player.ammo) this.ammo = data.player.ammo;
+        this.updateWeaponsHud();
         this.round = data.gameState.round || 1;
         this.roundWins = data.gameState.roundWins || { red: 0, blue: 0 };
         this.suddenDeath = !!data.gameState.suddenDeath;
@@ -315,7 +320,7 @@ export class NetworkMethods {
         }
 
         if (data.killed) {
-          this.addKillFeed(this.nameOf(data.attackerId), this.nameOf(data.targetId));
+          this.addKillFeed(this.nameOf(data.attackerId), this.nameOf(data.targetId), data.weapon);
         }
 
         if (data.targetId === this.localPlayer?.id) {
@@ -653,6 +658,9 @@ export class NetworkMethods {
     this.suddenDeath = !!gs.suddenDeath;
     this.syncTimer(gs.timeRemaining);
     this.playerHealth = data.player.health;
+    this.clearWeaponVisuals();
+    if (data.player.ammo) this.ammo = data.player.ammo;
+    this.updateWeaponsHud();
     this.setHealthBar(this.playerHealth);
 
     // Shot down when the link went: the resumed seat is a fresh plane

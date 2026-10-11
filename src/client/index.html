@@ -867,6 +867,13 @@
         .tbtn.tiny { width: auto; height: 34px; padding: 0 0.8rem; border-radius: 17px; font-size: 0.7rem; }
         .tbtn.down { background: rgba(255, 210, 63, 0.8); color: #000; border-color: #FFD23F; }
         #btn-boost.down { background: rgba(0, 170, 255, 0.8); }
+        /* Weapon buttons ride in a row above the main cluster */
+        #btn-msl, #btn-flr, #btn-bmb { position: absolute; bottom: 112px; width: 54px; height: 54px; font-size: 0.65rem; }
+        #btn-msl { right: 0; border-color: rgba(255, 213, 79, 0.85); }
+        #btn-flr { right: 64px; border-color: rgba(255, 138, 101, 0.85); }
+        #btn-bmb { right: 128px; border-color: rgba(165, 214, 167, 0.85); }
+        #btn-bmb.hidden, #btn-msl.hidden { display: none; }
+        #btn-msl.ready { background: rgba(255, 60, 60, 0.6); border-color: #ff3d3d; }
 
         #touch-top {
             position: fixed;
@@ -1430,6 +1437,67 @@
             white-space: nowrap;
         }
 
+        /* Weapons: ammo readout, missile lock ring, incoming-missile warning, bomb sight */
+        #weapons-hud {
+            position: fixed; left: 1rem; bottom: 8.6rem; display: none; gap: 0.9rem;
+            font-size: 0.78rem; letter-spacing: 0.08em; color: #cfd8dc; text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+        }
+        #weapons-hud.show { display: flex; }
+        #weapons-hud .wpn b { color: #fff; font-weight: 700; margin-right: 0.25rem; }
+        #weapons-hud .pip { display: inline-block; width: 7px; height: 11px; margin-right: 2px; border-radius: 2px; background: #ffd54f; box-shadow: 0 0 4px rgba(255, 213, 79, 0.6); }
+        #weapons-hud .pip.empty { background: rgba(255,255,255,0.18); box-shadow: none; }
+        #weapons-hud .wpn.flr .pip { background: #ff8a65; box-shadow: 0 0 4px rgba(255, 138, 101, 0.6); }
+        #weapons-hud .wpn.flr .pip.empty, #weapons-hud .wpn.bmb .pip.empty { background: rgba(255,255,255,0.18); box-shadow: none; }
+        #weapons-hud .wpn.bmb .pip { background: #a5d6a7; box-shadow: 0 0 4px rgba(165, 214, 167, 0.6); }
+        #weapons-hud .key { font-size: 0.65rem; padding: 0 0.3rem; margin-left: 0.2rem; }
+        body.touch #weapons-hud { left: max(10px, env(safe-area-inset-left)); bottom: auto; top: 13.4rem; flex-direction: column; gap: 0.2rem; }
+
+        #msl-lock {
+            position: fixed; left: 0; top: 0; display: none; pointer-events: none; z-index: 7;
+            transform: translate(-50%, -50%);
+        }
+        #msl-lock .ring {
+            width: var(--size, 80px); height: var(--size, 80px); border-radius: 50%;
+            border: 2px dashed rgba(255, 213, 79, 0.95); box-shadow: 0 0 10px rgba(255, 213, 79, 0.45);
+            animation: mslspin 1.6s linear infinite;
+        }
+        #msl-lock.locked .ring { border: 3px solid #ff3d3d; box-shadow: 0 0 16px rgba(255, 60, 60, 0.9); animation: mslpulse 0.5s ease-in-out infinite; }
+        #msl-lock .label {
+            position: absolute; left: 50%; top: 100%; transform: translateX(-50%); margin-top: 4px; white-space: nowrap;
+            font-size: 0.72rem; font-weight: 700; letter-spacing: 0.2em; color: #ffd54f; text-shadow: 0 0 6px rgba(0,0,0,0.8);
+        }
+        #msl-lock.locked .label { color: #ff6b6b; }
+        @keyframes mslspin { to { transform: rotate(360deg); } }
+        @keyframes mslpulse { 50% { transform: scale(0.88); } }
+
+        #missile-warn {
+            position: fixed; top: 22%; left: 50%; transform: translateX(-50%); display: none; pointer-events: none; z-index: 8;
+            font-size: 1.5rem; font-weight: 800; letter-spacing: 0.3em; color: #ff3b3b; text-align: center;
+            text-shadow: 0 0 16px rgba(255, 40, 40, 0.95); border: 2px solid #ff3b3b; border-radius: 6px;
+            padding: 0.15rem 1rem 0.15rem 1.3rem; background: rgba(40, 0, 0, 0.35);
+        }
+        #missile-warn small { display: block; font-size: 0.7rem; letter-spacing: 0.2em; color: #ffcdd2; }
+        #missile-warn.show { display: block; animation: pullupBlink 0.35s steps(2, start) infinite; }
+        #missile-dir {
+            position: fixed; top: 50%; left: 50%; width: 300px; height: 300px; margin: -150px 0 0 -150px;
+            pointer-events: none; display: none; z-index: 7;
+        }
+        #missile-dir.show { display: block; }
+        #missile-dir::before {
+            content: ''; position: absolute; left: 50%; top: -6px; margin-left: -14px;
+            border-left: 14px solid transparent; border-right: 14px solid transparent; border-bottom: 24px solid #ff3b3b;
+            filter: drop-shadow(0 0 8px rgba(255, 50, 50, 0.9));
+        }
+
+        #bomb-sight {
+            position: fixed; left: 0; top: 0; width: 34px; height: 34px; margin: -17px 0 0 -17px; display: none; pointer-events: none; z-index: 6;
+            border: 2px solid rgba(165, 214, 167, 0.95); border-radius: 50%; box-shadow: 0 0 8px rgba(165, 214, 167, 0.6);
+        }
+        #bomb-sight::before, #bomb-sight::after { content: ''; position: absolute; background: rgba(165, 214, 167, 0.95); }
+        #bomb-sight::before { left: 50%; top: -8px; bottom: -8px; width: 2px; margin-left: -1px; }
+        #bomb-sight::after { top: 50%; left: -8px; right: -8px; height: 2px; margin-top: -1px; }
+        #bomb-sight.over-mill { border-color: #ffd54f; box-shadow: 0 0 12px rgba(255, 213, 79, 0.9); }
+
         /* Damage direction indicator */
         #damage-dir {
             position: fixed;
@@ -1967,6 +2035,9 @@
                 <div class="control-section">
                     <strong>Combat</strong>
                     <span class="key">Space</span> Shoot<br>
+                    <span class="key">F</span> Missile (hold the ring)<br>
+                    <span class="key">G</span> Flares
+                    <span class="key">B</span> Bomb<br>
                     <span class="key">R</span> Barrel Roll
                 </div>
                 <div class="control-section">
@@ -2035,6 +2106,11 @@
 
             <div class="crosshair"></div>
             <div id="damage-dir"></div>
+            <div id="weapons-hud"></div>
+            <div id="msl-lock"><div class="ring"></div><div class="label">LOCKING</div></div>
+            <div id="missile-warn">MISSILE<small>G · FLARES · BREAK HARD</small></div>
+            <div id="missile-dir"></div>
+            <div id="bomb-sight"></div>
             <div id="tags"></div>
             <div id="edge"></div>
             <div id="lock">
@@ -2095,6 +2171,9 @@
                 <div class="stick-hint">DRAG TO STEER · UP / DOWN TO CLIMB / DIVE</div>
             </div>
             <div id="touch-buttons">
+                <button id="btn-msl" class="tbtn small">MSL</button>
+                <button id="btn-flr" class="tbtn small">FLR</button>
+                <button id="btn-bmb" class="tbtn small">BMB</button>
                 <button id="btn-roll" class="tbtn small">ROLL</button>
                 <button id="btn-boost" class="tbtn small">BOOST</button>
                 <button id="btn-fire" class="tbtn big">FIRE</button>

@@ -200,12 +200,14 @@ export class HudMethods {
     if (killed) el.classList.add('kill');
   }
 
-  addKillFeed(attackerName, victimName) {
+  addKillFeed(attackerName, victimName, weapon = 'gun') {
     const feed = document.getElementById('kill-feed');
     if (!feed) return;
     const entry = document.createElement('div');
     entry.className = 'kill-entry';
-    entry.innerHTML = `<span>${this.sanitizeInput(attackerName)}</span> &#9992; <span>${this.sanitizeInput(victimName)}</span>`;
+    // Rocket for missile kills, bomb for bomb kills, plane for guns
+    const icon = weapon === 'missile' ? '&#128640;' : weapon === 'bomb' ? '&#128163;' : '&#9992;';
+    entry.innerHTML = `<span>${this.sanitizeInput(attackerName)}</span> ${icon} <span>${this.sanitizeInput(victimName)}</span>`;
     feed.prepend(entry);
     while (feed.children.length > 4) feed.removeChild(feed.lastChild);
     setTimeout(() => { if (entry.parentNode) entry.parentNode.removeChild(entry); }, 4500);

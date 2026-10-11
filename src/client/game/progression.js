@@ -24,7 +24,7 @@ export class ProgressionMethods {
   onMyKill(data) {
     const now = this.animationTime;
     this.streak++;
-    this.addPopup(100, 'KILL');
+    this.addPopup(100, data.weapon === 'missile' ? 'MISSILE KILL' : data.weapon === 'bomb' ? 'BOMB KILL' : 'KILL');
     if (this.killTimes.filter(t => now - t < 4).length < 2) this.radioLine('targetDestroyed', 14);
     this.killTimes = this.killTimes.filter(t => now - t < 4).concat(now);
     const burst = this.killTimes.length;

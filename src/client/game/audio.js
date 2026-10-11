@@ -83,6 +83,20 @@ export class AudioMethods {
       case 'thunder':
         a.ui('thunder');
         break;
+      case 'missile-launch':
+        // Yours: right in your ears; others': out in the world
+        if (at) a.play('missile-launch', at, { gain: 1.2, ref: 25, maxDist: 1200, limit: 4 });
+        else a.play('missile-launch', null, { gain: 0.8 });
+        break;
+      case 'missile-boom':
+        a.play('explosion', at, { gain: 0.9, ref: 35, travel: true, reverb: 0.2, rate: 1.15, limit: 5 });
+        break;
+      case 'flare':
+        a.play('flare', at, { gain: 1, ref: 20, maxDist: 900, limit: 4 });
+        break;
+      case 'bomb-whistle':
+        a.play('bomb-whistle', at, { gain: 1.1, ref: 30, maxDist: 1000, limit: 3 });
+        break;
       case 'hitconfirm':
       case 'kill':
       case 'lock':

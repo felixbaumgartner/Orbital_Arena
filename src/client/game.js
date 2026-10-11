@@ -27,6 +27,7 @@ import { FlightMethods } from './game/flight.js';
 import { GuidanceMethods } from './game/guidance.js';
 import { ProgressionMethods } from './game/progression.js';
 import { MarkerMethods } from './game/markers.js';
+import { WeaponMethods } from './game/weapons.js';
 
 class Game {
   constructor() {
@@ -215,6 +216,7 @@ class Game {
     this.xpBanked = false;
     this.timeScale = 1;          // world speed (slow motion < 1)
 
+    this.initWeaponState();
     this.init();
 
     // Debug handle (also used by automated QA)
@@ -480,6 +482,9 @@ class Game {
         onRoll: () => this.startBarrelRoll(),
         onSettings: () => this.instruments.toggleSettings(),
         onScores: () => this.setScoreboardOpen(!this.scoreboardOpen),
+        onMissile: () => this.fireMissile(),
+        onFlares: () => this.deployFlares(),
+        onBomb: () => this.dropBomb(),
       });
       this.touch.show(false);
       const rotate = document.getElementById('rotate-overlay');
@@ -691,6 +696,7 @@ class Game {
 
     this.updateNameTags();
     this.updateEdgeMarkers();
+    this.updateWeapons(delta, realDelta);
     this.updateStork(delta);
     this.updateEnvironment(delta);
 
@@ -726,7 +732,7 @@ class Game {
 }
 
 // Mix every method group into Game (own methods win on name clashes)
-for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, AudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods]) {
+for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, AudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods, WeaponMethods]) {
   for (const name of Object.getOwnPropertyNames(mixin.prototype)) {
     if (name === 'constructor' || Object.prototype.hasOwnProperty.call(Game.prototype, name)) continue;
     Object.defineProperty(Game.prototype, name, Object.getOwnPropertyDescriptor(mixin.prototype, name));

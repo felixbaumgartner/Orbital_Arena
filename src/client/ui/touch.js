@@ -8,7 +8,7 @@ export class TouchControls {
       'ontouchstart' in window || navigator.maxTouchPoints > 0;
   }
 
-  constructor({ onFire, onBoost, onRoll, onSettings, onScores } = {}) {
+  constructor({ onFire, onBoost, onRoll, onSettings, onScores, onMissile, onFlares, onBomb } = {}) {
     this.stick = { x: 0, y: 0 };   // -1..1, x right, y down (screen space)
     this.active = false;
     this.stickPointer = null;
@@ -67,6 +67,9 @@ export class TouchControls {
     hold('btn-fire', () => onFire && onFire(true), () => onFire && onFire(false));
     hold('btn-boost', () => onBoost && onBoost(true), () => onBoost && onBoost(false));
     hold('btn-roll', () => onRoll && onRoll());
+    hold('btn-msl', () => onMissile && onMissile());
+    hold('btn-flr', () => onFlares && onFlares());
+    hold('btn-bmb', () => onBomb && onBomb());
     const tap = (id, fn) => {
       const el = document.getElementById(id);
       if (el) el.addEventListener('click', (e) => { fn(); e.preventDefault(); });

@@ -100,10 +100,12 @@ export class Instruments {
     if (bloom) bloom.addEventListener('change', () => change('bloom', bloom.checked));
     if (fps) fps.addEventListener('change', () => change('fps', fps.checked));
     if (time) time.addEventListener('change', () => change('time', time.value));
-    const killcam = document.getElementById('set-killcam');
-    if (killcam) {
-      killcam.checked = this.settings.killcam !== false;
-      killcam.addEventListener('change', () => change('killcam', killcam.checked));
+    // Plain on/off settings: [setting key, element id, default]
+    for (const [key, id, def] of [['killcam', 'set-killcam', true], ['invertY', 'set-invert', false], ['rumble', 'set-rumble', true]]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.checked = this.settings[key] === undefined ? def : !!this.settings[key];
+      el.addEventListener('change', () => change(key, el.checked));
     }
     // Volume sliders (0-100 in the UI, 0-1 in settings)
     for (const [key, id] of [['volMaster', 'set-vol-master'], ['volSfx', 'set-vol-sfx'], ['volMusic', 'set-vol-music'], ['volVoice', 'set-vol-voice']]) {

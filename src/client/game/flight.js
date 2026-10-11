@@ -25,6 +25,10 @@ export class FlightMethods {
     this.mouseStick.pitch *= decay;
     let mouseTurn = this.pointerLocked ? this.mouseStick.turn : 0;
     let mousePitch = this.pointerLocked ? this.mouseStick.pitch : 0;
+    if (this.padStick) {
+      mouseTurn -= this.padStick.x;   // stick left = turn left
+      mousePitch -= this.padStick.y;  // stick up = climb (Invert Y flips it)
+    }
     if (this.touch && this.touch.active) {
       mouseTurn -= this.touch.stick.x;   // push left = turn left
       mousePitch -= this.touch.stick.y;  // push up = climb
@@ -244,17 +248,22 @@ export class FlightMethods {
       this.camera.updateProjectionMatrix();
     }
 
-    // Camera leans into the bank (clamped so barrel rolls don't flip the view)
-    const camRoll = Math.max(-0.7, Math.min(0.7, ship.rotation.z)) * 0.35;
-    this.camera.rotateZ(camRoll);
+    // Cockpit view, look-back and free look take over from the chase camera
+    const otherView = this.updateCameraMode(ship, speed, delta);
+    if (this.shakeTime > 0) this.shakeTime = Math.max(0, this.shakeTime - delta);
 
-    // Impact shake: decaying random camera offset
-    if (this.shakeTime > 0) {
-      this.shakeTime = Math.max(0, this.shakeTime - delta);
-      const s = this.shakeMag * (this.shakeTime / this.shakeDur);
-      this.camera.position.x += (Math.random() - 0.5) * s * 2;
-      this.camera.position.y += (Math.random() - 0.5) * s * 2;
-      this.camera.position.z += (Math.random() - 0.5) * s * 2;
+    if (!otherView) {
+      // Camera leans into the bank (clamped so barrel rolls don't flip the view)
+      const camRoll = Math.max(-0.7, Math.min(0.7, ship.rotation.z)) * 0.35;
+      this.camera.rotateZ(camRoll);
+
+      // Impact shake: decaying random camera offset
+      if (this.shakeTime > 0) {
+        const s = this.shakeMag * (this.shakeTime / this.shakeDur);
+        this.camera.position.x += (Math.random() - 0.5) * s * 2;
+        this.camera.position.y += (Math.random() - 0.5) * s * 2;
+        this.camera.position.z += (Math.random() - 0.5) * s * 2;
+      }
     }
 
     // Photo mode: cinematic orbit around the plane

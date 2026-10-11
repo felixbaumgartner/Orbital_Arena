@@ -30,6 +30,8 @@ import { ProgressionMethods } from './game/progression.js';
 import { MarkerMethods } from './game/markers.js';
 import { WeaponMethods } from './game/weapons.js';
 import { ReplayMethods } from './game/replay.js';
+import { CameraMethods } from './game/camera.js';
+import { GamepadMethods } from './game/gamepad.js';
 
 class Game {
   constructor() {
@@ -220,6 +222,7 @@ class Game {
 
     this.initWeaponState();
     this.initReplay();
+    this.initGamepad();
     this.init();
 
     // Debug handle (also used by automated QA)
@@ -314,6 +317,7 @@ class Game {
     this.applySettings(this.instruments.settings);
     this.chatter = new Chatter((n) => this.playSound(n));
 
+    this.initCameraModes();
     this.setupUI();
     this.animate();
 
@@ -613,6 +617,8 @@ class Game {
     // Clamp delta so a backgrounded tab doesn't teleport the plane on return
     // timeScale < 1 is slow motion (kill cam, final kill); realDelta keeps UI timing honest
     const realDelta = Math.min(this.clock.getDelta(), 0.1);
+    this.updateGamepad();
+    this.resetCameraLayers();
     const delta = realDelta * this.timeScale;
     this.realDelta = realDelta;
     this.animationTime += delta;
@@ -747,7 +753,7 @@ class Game {
 }
 
 // Mix every method group into Game (own methods win on name clashes)
-for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, AudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods, WeaponMethods, ReplayMethods]) {
+for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, AudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods, WeaponMethods, ReplayMethods, CameraMethods, GamepadMethods]) {
   for (const name of Object.getOwnPropertyNames(mixin.prototype)) {
     if (name === 'constructor' || Object.prototype.hasOwnProperty.call(Game.prototype, name)) continue;
     Object.defineProperty(Game.prototype, name, Object.getOwnPropertyDescriptor(mixin.prototype, name));

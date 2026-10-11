@@ -90,6 +90,8 @@ export class InputMethods {
       case 'shift': this.controls.boost = true; break;
       case ' ': this.controls.shooting = true; event.preventDefault(); break;
       case 'r': this.startBarrelRoll(); break;
+      case 'v': this.toggleCameraMode(); break;
+      case 'z': this.keyLookBack = true; this.look.back = true; break;
       case 'f': this.fireMissile(); break;
       case 'g': this.deployFlares(); break;
       case 'b': this.dropBomb(); break;
@@ -98,7 +100,7 @@ export class InputMethods {
       case 'c': this.captureRequested = true; break;
       case 'h': this.toggleControlsPanel(); break;
       case 'x': this.skipOnboarding(); break;
-      case 'tab': this.setScoreboardOpen(true); event.preventDefault(); break;
+      case 'tab': this.tabHeld = true; this.setScoreboardOpen(true); event.preventDefault(); break;
       case 'escape': this.instruments.toggleSettings(true); event.preventDefault(); break;
     }
   }
@@ -116,7 +118,8 @@ export class InputMethods {
       case 'arrowdown': this.controls.pitchDown = false; event.preventDefault(); break;
       case 'shift': this.controls.boost = false; break;
       case ' ': this.controls.shooting = false; event.preventDefault(); break;
-      case 'tab': this.setScoreboardOpen(false); event.preventDefault(); break;
+      case 'tab': this.tabHeld = false; this.setScoreboardOpen(false); event.preventDefault(); break;
+      case 'z': this.keyLookBack = false; this.look.back = false; break;
     }
   }
 }

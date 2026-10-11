@@ -52,6 +52,7 @@ export class AudioMethods {
    * attenuated, muffled by distance and, for blasts, delayed by distance.
    */
   playSound(name, at = null) {
+    this.rumbleFor(name, at); // the controller feels what you hear
     const a = this.audio;
     if (!a) return;
     switch (name) {

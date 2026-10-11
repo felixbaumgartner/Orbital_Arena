@@ -987,6 +987,9 @@
         body.photo::before { top: 0; }
         body.photo::after { bottom: 0; }
 
+        /* Cockpit view: the dashboard dials replace the attitude panel */
+        body.cockpit #attitude-cluster { display: none; }
+
         /* Replays: kill cam, final kill, play of the match */
         body.replaying #hud, body.replaying #chat, body.replaying #crash-overlay,
         body.replaying #notify-column > :not(#toasts), body.replaying #touch-ui { visibility: hidden !important; }
@@ -2084,7 +2087,9 @@
                     <span class="key">Tab</span> Scores
                     <span class="key">Esc</span> Settings<br>
                     <span class="key">P</span> Photo
-                    <span class="key">H</span> Hide this
+                    <span class="key">H</span> Hide this<br>
+                    <span class="key">V</span> Cockpit view
+                    <span class="key">Z</span> Look back
                 </div>
             </div>
 
@@ -2291,6 +2296,14 @@
             <div class="setting-row">
                 <label for="set-killcam">Kill cam &amp; replays</label>
                 <input type="checkbox" id="set-killcam" checked>
+            </div>
+            <div class="setting-row">
+                <label for="set-invert">Controller: invert Y (pull back to climb)</label>
+                <input type="checkbox" id="set-invert">
+            </div>
+            <div class="setting-row">
+                <label for="set-rumble">Controller rumble</label>
+                <input type="checkbox" id="set-rumble" checked>
             </div>
             <div class="setting-group">Sound</div>
             <div class="setting-row">

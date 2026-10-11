@@ -111,6 +111,7 @@ export class NetworkMethods {
         const ship = this.createPlayerShip(myColor, data.player.plane, data.player.cosmetics);
         this.scene.add(ship);
         this.players.set(this.localPlayer.id, ship);
+        this.markOwnPlane(ship);
         this.createTrail(data.player.id, data.player.cosmetics);
         if (data.player.cosmetics?.stork && this.levelFor(this.totalXp()) >= STORK_LEVEL) this.createStork();
         this.playerHealth = data.player.maxHealth || 100;

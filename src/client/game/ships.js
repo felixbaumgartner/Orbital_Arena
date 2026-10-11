@@ -184,6 +184,7 @@ export class ShipMethods {
     group.userData.props = [];
     const bodyColor = new THREE.Color(color);
     const accentColor = new THREE.Color(accent);
+    group.userData.bodyColor = bodyColor; // the cockpit cowling matches the paint
     model.traverse((c) => {
       // Only the propeller root (a multi-material prop exports as a group with 'Prop_x_1' children)
       if (c.name.startsWith('Prop') && !(c.parent && c.parent.name.startsWith('Prop'))) group.userData.props.push(c);

@@ -555,6 +555,14 @@
             display: none; pointer-events: none;
         }
         #stealth-chip.show { display: block; }
+        #net-chip {
+            position: fixed; top: 7.2rem; left: 50%; transform: translateX(-50%); z-index: 30;
+            font-size: 0.75rem; letter-spacing: 0.12em; color: #ffe082; background: rgba(8, 14, 20, 0.7);
+            border: 1px solid rgba(255, 224, 130, 0.55); border-radius: 12px; padding: 0.15rem 0.7rem;
+            display: none; pointer-events: none; animation: netpulse 1.2s ease-in-out infinite;
+        }
+        #net-chip.show { display: block; }
+        @keyframes netpulse { 50% { opacity: 0.55; } }
         body.touch #stealth-chip { bottom: auto; top: 13.6rem; left: max(10px, env(safe-area-inset-left)); transform: none; }
 
         /* Vignettes */
@@ -2035,6 +2043,7 @@
             <div id="pullup">PULL UP</div>
             <div id="stall">STALL · NOSE DOWN</div>
             <div id="boundary">TURN BACK · LEAVING THE ARENA</div>
+            <div id="net-chip"></div>
             <div id="stealth-chip">🌲 BELOW THE TREES · hidden from radar</div>
 
             <canvas id="radar" width="160" height="160"></canvas>
@@ -2200,6 +2209,6 @@
         <div class="crash-sub" id="crash-sub"></div>
     </div>
 
-    <script src="bundle.js"></script>
+    <script type="module" src="./main.js"></script>
 </body>
 </html>

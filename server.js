@@ -9,7 +9,8 @@ const httpServer = createServer(app);
 
 // Same Socket.IO path as the Vercel Function (api/socket-io.js) so the
 // client connects identically in local dev and production.
-const io = new Server(httpServer, { path: '/api/socket-io' });
+// Short ping cycle: a dead connection is noticed in seconds, not ~45s
+const io = new Server(httpServer, { path: '/api/socket-io', pingInterval: 10000, pingTimeout: 8000 });
 
 // Debug logs for static file serving
 console.log('Current working directory:', process.cwd());

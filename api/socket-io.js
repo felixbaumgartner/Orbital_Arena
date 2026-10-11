@@ -14,7 +14,8 @@ const server = createServer((req, res) => {
 // Socket.IO is mounted at exactly /api/socket-io (requests go to
 // /api/socket-io/?EIO=4...). Deeper subpaths like /api/socket-io/socket.io
 // are NOT routed to this function by Vercel, so the path must stay flat.
-const io = new Server(server, { path: '/api/socket-io' });
+// Short ping cycle: a dead connection is noticed in seconds, not ~45s
+const io = new Server(server, { path: '/api/socket-io', pingInterval: 10000, pingTimeout: 8000 });
 
 attachGameServer(io);
 

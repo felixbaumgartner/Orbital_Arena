@@ -28,6 +28,7 @@ import { GuidanceMethods } from './game/guidance.js';
 import { ProgressionMethods } from './game/progression.js';
 import { MarkerMethods } from './game/markers.js';
 import { WeaponMethods } from './game/weapons.js';
+import { ReplayMethods } from './game/replay.js';
 
 class Game {
   constructor() {
@@ -217,6 +218,7 @@ class Game {
     this.timeScale = 1;          // world speed (slow motion < 1)
 
     this.initWeaponState();
+    this.initReplay();
     this.init();
 
     // Debug handle (also used by automated QA)
@@ -448,6 +450,8 @@ class Game {
     // Browsers only allow sound after a gesture: the first click or key on
     // the login screen starts the engine and the menu music
     const firstGesture = () => this.initAudio();
+    // Touch: tapping anywhere skips a replay
+    document.addEventListener('pointerdown', () => { if (this.replay && this.isTouch) this.skipReplay(); });
     document.addEventListener('pointerdown', firstGesture, { once: true });
     document.addEventListener('keydown', firstGesture, { once: true });
 
@@ -694,12 +698,15 @@ class Game {
       }
     });
 
+    // Replays pose the planes and fly the camera (after the live update)
+    this.updateReplay(realDelta);
     this.updateNameTags();
     this.updateEdgeMarkers();
     this.updateWeapons(delta, realDelta);
     this.updateStork(delta);
     this.updateEnvironment(delta);
 
+    this.recordFrame(delta);
     this.updateAudio(this.realDelta);
 
     if (this.postfx) this.postfx.render();
@@ -732,7 +739,7 @@ class Game {
 }
 
 // Mix every method group into Game (own methods win on name clashes)
-for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, AudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods, WeaponMethods]) {
+for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, AudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods, WeaponMethods, ReplayMethods]) {
   for (const name of Object.getOwnPropertyNames(mixin.prototype)) {
     if (name === 'constructor' || Object.prototype.hasOwnProperty.call(Game.prototype, name)) continue;
     Object.defineProperty(Game.prototype, name, Object.getOwnPropertyDescriptor(mixin.prototype, name));

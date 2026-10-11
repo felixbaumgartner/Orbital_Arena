@@ -987,6 +987,40 @@
         body.photo::before { top: 0; }
         body.photo::after { bottom: 0; }
 
+        /* Replays: kill cam, final kill, play of the match */
+        body.replaying #hud, body.replaying #chat, body.replaying #crash-overlay,
+        body.replaying #notify-column > :not(#toasts), body.replaying #touch-ui { visibility: hidden !important; }
+        body.replaying::before, body.replaying::after {
+            content: ''; position: fixed; left: 0; width: 100%; height: 11vh; background: #000; z-index: 1150; pointer-events: none;
+        }
+        body.replaying::before { top: 0; }
+        body.replaying::after { bottom: 0; }
+        #replay-overlay { position: fixed; inset: 0; z-index: 1160; pointer-events: none; display: none; }
+        #replay-overlay.show { display: block; }
+        #replay-overlay .rp-tag {
+            position: absolute; top: calc(11vh + 14px); left: 22px; display: flex; align-items: center; gap: 0.55rem;
+            font-size: 1rem; font-weight: 800; letter-spacing: 0.32em; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+        }
+        #replay-overlay .rp-dot { width: 11px; height: 11px; border-radius: 50%; background: #ff3b3b; box-shadow: 0 0 10px #ff3b3b; animation: pullupBlink 0.8s steps(2, start) infinite; }
+        #replay-overlay.potm .rp-dot, #replay-overlay.final .rp-dot { background: #ffd23f; box-shadow: 0 0 10px #ffd23f; }
+        #replay-overlay .rp-card {
+            position: absolute; bottom: calc(11vh + 18px); left: 50%; transform: translateX(-50%); text-align: center;
+            background: rgba(8, 14, 20, 0.72); border: 1px solid rgba(255,255,255,0.18); border-radius: 10px; padding: 0.55rem 1.4rem;
+            animation: rpIn 0.5s ease-out;
+        }
+        #replay-overlay .rp-name { font-size: 1.35rem; font-weight: 800; letter-spacing: 0.12em; color: #fff; }
+        #replay-overlay .rp-sub { font-size: 0.85rem; color: #b0bec5; letter-spacing: 0.08em; margin-top: 0.15rem; }
+        #replay-overlay .rp-skip {
+            position: absolute; bottom: calc(11vh + 18px); right: 22px; font-size: 0.72rem; letter-spacing: 0.2em; color: #90a4ae;
+        }
+        #replay-overlay .rp-big {
+            position: absolute; top: 34%; left: 50%; transform: translate(-50%, -50%); font-size: 3rem; font-weight: 900;
+            letter-spacing: 0.25em; color: #ffd23f; text-shadow: 0 0 24px rgba(255, 210, 63, 0.7); white-space: nowrap;
+            animation: rpBig 2.2s ease-out forwards;
+        }
+        @keyframes rpIn { from { transform: translate(-50%, 14px); } }
+        @keyframes rpBig { 0% { opacity: 0; transform: translate(-50%, -50%) scale(1.4); } 15% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; } }
+
         #tutorial {
             position: fixed;
             top: 50%;
@@ -2201,6 +2235,13 @@
             <div class="im-sudden"></div>
         </div>
 
+        <div id="replay-overlay">
+            <div class="rp-tag"><span class="rp-dot"></span><span class="rp-title">KILL CAM</span></div>
+            <div class="rp-big"></div>
+            <div class="rp-card"><div class="rp-name"></div><div class="rp-sub"></div></div>
+            <div class="rp-skip">SPACE · SKIP</div>
+        </div>
+
         <div id="match-countdown"><div class="cd-label">MATCH STARTS IN</div><div class="cd-num">5</div></div>
 
         <div id="boost-vignette" class="vignette"></div>
@@ -2246,6 +2287,10 @@
             <div class="setting-row">
                 <label for="set-fps">Show FPS</label>
                 <input type="checkbox" id="set-fps">
+            </div>
+            <div class="setting-row">
+                <label for="set-killcam">Kill cam &amp; replays</label>
+                <input type="checkbox" id="set-killcam" checked>
             </div>
             <div class="setting-group">Sound</div>
             <div class="setting-row">

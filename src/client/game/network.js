@@ -270,6 +270,7 @@ export class NetworkMethods {
           this.projectiles.set(data.projectileId, projectile);
           this.fx.muzzleFlash(projectile.position);
           this.playSound('shot-remote', projectile.position);
+          this.recordShot(data.playerId, projectile.position, data.direction);
         }
       });
 
@@ -380,6 +381,8 @@ export class NetworkMethods {
           delete ship.userData.netRot;
         }
         if (data.playerId === this.localPlayer?.id) {
+          // Flying again: the kill cam (if still rolling) gives way
+          if (this.replay && this.replay.kind === 'killcam') this.endReplay(true);
           this.dead = false;
           if (this.audio) this.audio.setMuffle(0, 0.6);
           this.streak = 0;
@@ -402,7 +405,13 @@ export class NetworkMethods {
 
       socket.on('chatMessage', (data) => this.displayChatMessage(data.username, data.message));
       socket.on('gameStart', (gameState) => { this.gameState = gameState; this.updateHUD(); });
-      socket.on('gameEnd', (gameState) => { this.matchOver = true; this.gameState = gameState; this.showGameEnd(); });
+      socket.on('gameEnd', (gameState) => {
+        this.matchOver = true;
+        this.gameState = gameState;
+        this.controlsEnabled = false;
+        // The best moment of the match plays before the results
+        this.playOfTheMatch(() => this.showGameEnd());
+      });
       socket.on('error', (error) => console.error('Socket error:', error));
 
       // Authoritative health after crashes (server applies the damage)
@@ -452,8 +461,14 @@ export class NetworkMethods {
           setTimeout(() => this.radio(d.winner === 'red' ? 'blue' : 'red', 'lose', null, true), 3500);
         }
         if (!d.final) {
-          this.showIntermission(d);
-          if (d.winner) this.stinger(d.winner === this.localPlayer?.team ? 'roundWin' : 'roundLose');
+          const intermission = () => {
+            this.showIntermission(d);
+            if (d.winner) this.stinger(d.winner === this.localPlayer?.team ? 'roundWin' : 'roundLose');
+          };
+          // A round decided by a fresh kill gets it replayed in slow motion first
+          const clip = this.instruments?.settings.killcam !== false && !this.replay ? this.finalKillClip() : null;
+          if (clip) this.startReplay(clip, 'final', intermission);
+          else intermission();
         }
         this.controls.shooting = false;
       });

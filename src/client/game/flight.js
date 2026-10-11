@@ -10,6 +10,7 @@ export class FlightMethods {
 
   updatePlayer(delta) {
     if (!this.localPlayer || !this.players.has(this.localPlayer.id)) return;
+    if (this.replay) return; // a replay owns the planes and the camera
     if (this.crashed && !this.dead) {
       this.updateCrashRecovery(delta);
       return;

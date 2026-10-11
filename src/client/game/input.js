@@ -37,6 +37,15 @@ export class InputMethods {
       return;
     }
 
+    // A replay is rolling: Space, Enter or Escape skips it
+    if (this.replay) {
+      if (event.key === ' ' || event.key === 'Enter' || event.key === 'Escape') {
+        this.skipReplay();
+        event.preventDefault();
+      }
+      return;
+    }
+
     // Settings panel open: Escape closes it, everything else goes to the form
     if (this.instruments?.settingsOpen) {
       if (event.key === 'Escape') {

@@ -37,7 +37,7 @@ function weaponParts() {
   return shared;
 }
 
-function makeMissile() {
+export function makeMissile() {
   const p = weaponParts();
   const g = new THREE.Group();
   g.add(new THREE.Mesh(p.body, p.white));

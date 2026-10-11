@@ -267,7 +267,7 @@ export class HudMethods {
     }
     // Respawn countdown (server respawns after RESPAWN_DELAY = 3s)
     clearInterval(this.respawnTicker);
-    let left = 3;
+    let left = Math.ceil((this.rules.respawnDelay || 3000) / 1000);
     const tick = () => { if (sub) sub.textContent = `Respawning in ${left}…`; };
     tick();
     this.respawnTicker = setInterval(() => { left = Math.max(1, left - 1); tick(); }, 1000);

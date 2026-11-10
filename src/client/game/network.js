@@ -2,6 +2,7 @@
 // Methods are mixed into the Game class (see game.js); `this` is the Game.
 import * as THREE from 'three';
 import { io } from 'socket.io-client';
+import { wrapAngle } from './smooth.js';
 import { GAME_CONFIG, STORK_LEVEL, CAPTURE_WINDMILLS } from '../config.js';
 
 export class NetworkMethods {
@@ -160,8 +161,9 @@ export class NetworkMethods {
           ship.rotation.set(0, 0, 0);
           this.shipRotation = 0;
           this.pendingTakeoffShip = ship;
-          this.camera.position.set(ship.position.x, 9, ship.position.z + 14);
-          this.camera.lookAt(ship.position);
+          this.pitchAngle = 0;
+          this.resetChaseCamera();
+          this.placeCamera(ship, 0, 0);
           const tutorial = document.getElementById('tutorial');
           if (tutorial) tutorial.style.display = 'block';
         } else {
@@ -251,13 +253,19 @@ export class NetworkMethods {
                 };
               }
             }
-            ship.userData.netTime = nowMs;
-            ship.userData.netPos = data.position;
-            ship.userData.netRot = {
+            const rot = {
               x: r._x !== undefined ? r._x : (r.x || 0),
               y: r._y !== undefined ? r._y : (r.y || 0),
               z: r._z !== undefined ? r._z : (r.z || 0),
             };
+            // How fast it is turning, so the heading keeps moving between packets
+            const prevRot = ship.userData.netRot;
+            const rdt = prevT ? (nowMs - prevT) / 1000 : 0;
+            ship.userData.yawRate = prevRot && rdt > 0.02 && rdt < 0.5
+              ? Math.max(-4, Math.min(4, wrapAngle(rot.y - prevRot.y) / rdt)) : 0;
+            ship.userData.netTime = nowMs;
+            ship.userData.netPos = data.position;
+            ship.userData.netRot = rot;
           }
         }
       });
@@ -386,14 +394,21 @@ export class NetworkMethods {
           ship.visible = true;
           delete ship.userData.netPos;
           delete ship.userData.netRot;
+          delete ship.userData.dVel;
+          // Other planes swell into view instead of popping in
+          if (data.playerId !== this.localPlayer?.id) {
+            if (!ship.userData.baseScale) ship.userData.baseScale = ship.scale.clone();
+            ship.userData.spawnIn = 0;
+          }
         }
         if (data.playerId === this.localPlayer?.id) {
           // Flying again: the kill cam (if still rolling) gives way
+          if (ship && this.replay && this.replay.mine) this.replay.mine.pos.copy(ship.position);
           if (this.replay && this.replay.kind === 'killcam') this.endReplay(true);
           this.dead = false;
           if (this.audio) this.audio.setMuffle(0, 0.6);
           this.streak = 0;
-          if (ship) this.faceNearestEnemy(ship);
+          if (ship) { this.faceNearestEnemy(ship); this.settleAfterTeleport(ship); }
           clearInterval(this.respawnTicker);
           const sub = document.getElementById('crash-sub');
           if (sub) sub.textContent = '';

@@ -2,6 +2,7 @@
 // Methods are mixed into the Game class (see game.js); `this` is the Game.
 import * as THREE from 'three';
 import { GAME_CONFIG, TRAILS } from '../config.js';
+import { damp } from './smooth.js';
 
 export class EffectsMethods {
   // =========================================================================
@@ -156,7 +157,7 @@ export class EffectsMethods {
     const alive = this.localPlayer && !this.dead && this.controlsEnabled && !this.replay && !this.photoMode;
     const boosting = alive && this.controls.boost && this.localPlayer.energy > 0;
     const target = alive ? Math.max(0, Math.min(1, (this.airspeed - 80) / 50)) * (boosting ? 1 : 0.75) : 0;
-    this.speedBlurAmt = (this.speedBlurAmt || 0) + (target - (this.speedBlurAmt || 0)) * Math.min(1, realDelta * 4);
+    this.speedBlurAmt = damp(this.speedBlurAmt || 0, target, 4, realDelta);
     // A jolt of aberration when hit, and a pulse when nearly down
     this.hitAberration = Math.max(0, (this.hitAberration || 0) - realDelta * 2.5);
     const max = this.playerMaxHealth || 100;
@@ -168,11 +169,14 @@ export class EffectsMethods {
   }
 
   /**
-   * Kicks off a decaying camera shake (magnitude in world units)
+   * Kicks off a decaying camera shake (magnitude in world units). A smaller
+   * shake never cuts a bigger one short.
    */
   shake(magnitude, duration) {
-    this.shakeMag = magnitude;
-    this.shakeDur = duration;
-    this.shakeTime = duration;
+    const C = this.cam;
+    if (!C || magnitude < C.shake) return;
+    if (this.reducedMotion) magnitude *= 0.25;
+    C.shake = magnitude;
+    C.shakeRate = magnitude / Math.max(0.05, duration);
   }
 }

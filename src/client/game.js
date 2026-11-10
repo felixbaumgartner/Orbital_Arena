@@ -11,6 +11,7 @@ import { TouchControls } from './ui/touch.js';
 import { createSharedMaterials, createHorizonRing } from './scenery/props.js';
 import { Chatter } from './ui/chatter.js';
 import { GAME_CONFIG } from './config.js';
+import { dampK, wrapAngle } from './game/smooth.js';
 import { FX } from './fx/effects';
 import { Wreckage } from './fx/wreckage';
 import { EnvProbe } from './render/envprobe';
@@ -77,9 +78,6 @@ class Game {
     this.crashGrace = 0;
 
     // Camera shake
-    this.shakeTime = 0;
-    this.shakeDur = 0;
-    this.shakeMag = 0;
 
     // Live match timer (client-side countdown between server updates)
     this.timerSync = null;
@@ -321,6 +319,7 @@ class Game {
 
     this.initCameraModes();
     this.setupUI();
+    this.animateBound = this.animate.bind(this);
     this.animate();
 
     // Build stamp (settings footer + console) so we can tell what's running
@@ -615,13 +614,15 @@ class Game {
   }
 
 
-  animate() {
-    requestAnimationFrame(this.animate.bind(this));
+  animate(now) {
+    requestAnimationFrame(this.animateBound);
+    // The browser's own frame time is steadier than reading a clock mid-frame.
     // Clamp delta so a backgrounded tab doesn't teleport the plane on return
     // timeScale < 1 is slow motion (kill cam, final kill); realDelta keeps UI timing honest
-    const realDelta = Math.min(this.clock.getDelta(), 0.1);
+    const realDelta = this.lastFrameMs && now ? Math.min(Math.max((now - this.lastFrameMs) / 1000, 0), 0.1) : 0.016;
+    this.lastFrameMs = now || performance.now();
     this.updateGamepad();
-    this.resetCameraLayers();
+    this.flewThisFrame = false;
     const delta = realDelta * this.timeScale;
     this.realDelta = realDelta;
     this.animationTime += delta;
@@ -671,31 +672,49 @@ class Game {
     }
 
     // Animate other players
+    const nowMs = performance.now();
+    const kPos = dampK(6, delta), kVel = dampK(8, delta), kRot = dampK(10, delta);
     this.players.forEach((ship, id) => {
       if (id !== this.localPlayer?.id) {
         // Glide toward the latest network position/rotation so remote
         // planes (bots update at 10Hz) move smoothly between packets
         if (ship.userData.netPos && !this.replay) {
-          const t = 1 - Math.exp(-10 * delta);
-          const np = ship.userData.netPos;
-          // Dead reckoning: aim where the plane is now, not where the last
-          // packet said it was (capped so a stalled link doesn't fly it away)
-          const v = ship.userData.vel;
-          const ahead = v ? Math.min(0.25, (performance.now() - (ship.userData.netTime || 0)) / 1000) : 0;
-          const tx = np.x + (v ? v.x * ahead : 0);
-          const ty = (np.y || GAME_CONFIG.FLIGHT_HEIGHT) + (v ? v.y * ahead : 0);
-          const tz = np.z + (v ? v.z * ahead : 0);
-          ship.position.x += (tx - ship.position.x) * t;
-          ship.position.y += (ty - ship.position.y) * t;
-          ship.position.z += (tz - ship.position.z) * t;
-          const nr = ship.userData.netRot;
+          // Dead reckoning. The plane keeps flying at its own (eased)
+          // velocity every frame, and is drawn gently toward where the
+          // latest packet says it should be by now. Easing straight at a
+          // moving target would trail behind it and lurch on every packet.
+          const u = ship.userData, np = u.netPos, v = u.vel;
+          const rawAge = (nowMs - (u.netTime || 0)) / 1000;
+          const age = Math.min(0.35, rawAge);
+          // A stalled link coasts to a stop rather than flying off for ever
+          const live = rawAge > 0.35 ? Math.max(0, 1 - (rawAge - 0.35) / 0.45) : 1;
+          const dv = u.dVel || (u.dVel = { x: v ? v.x : 0, y: v ? v.y : 0, z: v ? v.z : 0 });
+          dv.x += ((v ? v.x * live : 0) - dv.x) * kVel;
+          dv.y += ((v ? v.y * live : 0) - dv.y) * kVel;
+          dv.z += ((v ? v.z * live : 0) - dv.z) * kVel;
+          ship.position.x += dv.x * delta;
+          ship.position.y += dv.y * delta;
+          ship.position.z += dv.z * delta;
+          const ex = np.x + (v ? v.x * age : 0) - ship.position.x;
+          const ey = (np.y || GAME_CONFIG.FLIGHT_HEIGHT) + (v ? v.y * age : 0) - ship.position.y;
+          const ez = np.z + (v ? v.z * age : 0) - ship.position.z;
+          // Far off (respawn, new round, reconnect): jump, don't glide across the map
+          const k = ex * ex + ey * ey + ez * ez > 60 * 60 ? 1 : kPos;
+          ship.position.x += ex * k;
+          ship.position.y += ey * k;
+          ship.position.z += ez * k;
+          const nr = u.netRot;
           if (nr) {
-            ship.rotation.x += (nr.x - ship.rotation.x) * t;
-            let dy = nr.y - ship.rotation.y;
-            dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-            ship.rotation.y += dy * t;
-            ship.rotation.z += (nr.z - ship.rotation.z) * t;
+            ship.rotation.x += wrapAngle(nr.x - ship.rotation.x) * kRot;
+            ship.rotation.y += wrapAngle(nr.y + (u.yawRate || 0) * age - ship.rotation.y) * kRot;
+            ship.rotation.z += wrapAngle(nr.z - ship.rotation.z) * kRot;
           }
+        }
+        if (ship.userData.spawnIn !== undefined) {
+          ship.userData.spawnIn = Math.min(1, ship.userData.spawnIn + delta / 0.35);
+          const g = ship.userData.spawnIn;
+          ship.scale.copy(ship.userData.baseScale).multiplyScalar(0.4 + 0.6 * g * (2 - g));
+          if (g >= 1) delete ship.userData.spawnIn;
         }
         if (ship.userData.leftAB) {
           const s = 0.8 + Math.sin(this.animationTime * 15 + id.length) * 0.3;
@@ -716,6 +735,12 @@ class Game {
 
     // Replays pose the planes and fly the camera (after the live update)
     this.updateReplay(realDelta);
+    // The camera is final from here on: markers project against what is drawn
+    this.finishCamera(realDelta);
+    if (this.flewThisFrame && this.localPlayer) {
+      const mine = this.players.get(this.localPlayer.id);
+      if (mine) { this.updateWaypoint(mine); this.updateTargeting(mine); }
+    }
     this.updateNameTags();
     this.updateEdgeMarkers();
     this.updateWeapons(delta, realDelta);

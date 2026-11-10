@@ -391,8 +391,9 @@ export class GuidanceMethods {
     ship.rotation.y = this.shipRotation;
     this.controlsEnabled = true;
     this.crashGrace = GAME_CONFIG.CRASH_GRACE;
-    this.camera.position.set(ship.position.x + Math.sin(this.shipRotation) * 14, ship.position.y + 8, ship.position.z + Math.cos(this.shipRotation) * 14);
-    this.camera.lookAt(ship.position);
+    this.rotationVelocity = 0;
+    this.resetChaseCamera();
+    this.placeCamera(ship, this.airspeed || GAME_CONFIG.MOVEMENT_SPEED, 0);
     this.onAirborne();
   }
 
@@ -409,5 +410,17 @@ export class GuidanceMethods {
     this.shipRotation = Math.atan2(-(best.position.x - ship.position.x), -(best.position.z - ship.position.z));
     ship.rotation.y = this.shipRotation;
     this.pitchAngle = 0;
+  }
+
+  /** After any teleport: level wings, no leftover turn, camera starts fresh */
+  settleAfterTeleport(ship) {
+    this.rotationVelocity = 0;
+    this.rollTimer = 0;
+    this.rollFrom = null;
+    this.pitchAngle = 0;
+    if (ship) { ship.rotation.x = 0; ship.rotation.z = 0; ship.rotation.y = this.shipRotation; }
+    this.resetChaseCamera();
+    // A replay still running must hand back this new pose, not the old one
+    if (ship && this.replay && this.replay.mine) { this.replay.mine.pos.copy(ship.position); this.replay.mine.rot.copy(ship.rotation); }
   }
 }

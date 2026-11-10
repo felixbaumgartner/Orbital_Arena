@@ -1031,7 +1031,7 @@ export class TerrainMethods {
     if (this.birdFlock && this.localPlayer) {
       const ship = this.players.get(this.localPlayer.id);
       if (ship) {
-        this.birdAnchor.lerp(ship.position, Math.min(1, delta * 0.3));
+        this.birdAnchor.lerp(ship.position, 1 - Math.exp(-0.3 * delta));
         this.birdAngle += delta * 0.12;
         this.birdFlock.position.set(
           this.birdAnchor.x + Math.cos(this.birdAngle) * 130,

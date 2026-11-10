@@ -2,6 +2,9 @@
 // Methods are mixed into the Game class (see game.js); `this` is the Game.
 import * as THREE from 'three';
 import { GAME_CONFIG, CAPTURE_WINDMILLS } from '../config.js';
+import { damp, wrapAngle, clamp } from './smooth.js';
+
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 export class FlightMethods {
   // =========================================================================
@@ -65,7 +68,7 @@ export class FlightMethods {
       this.speedSurge -= delta;
       cruise *= GAME_CONFIG.SPEED_SURGE_MULTIPLIER;
     }
-    this.airspeed += (cruise - this.airspeed) * Math.min(1, delta * GAME_CONFIG.THRUST_RESPONSE * (boosting ? 2.5 : 1));
+    this.airspeed = damp(this.airspeed, cruise, GAME_CONFIG.THRUST_RESPONSE * (boosting ? 2.5 : 1), delta);
     this.airspeed -= Math.sin(this.pitchAngle) * GAME_CONFIG.GRAVITY_GAIN * delta;
     this.airspeed -= Math.abs(this.rotationVelocity) / GAME_CONFIG.TURN_RATE * GAME_CONFIG.TURN_DRAG * delta;
     this.airspeed = Math.max(GAME_CONFIG.STALL_SPEED * 0.6, Math.min(GAME_CONFIG.DIVE_MAX_SPEED, this.airspeed));
@@ -91,9 +94,15 @@ export class FlightMethods {
 
     // Banked turning (A/D): turn rate eases toward the input
     const turnInput = Math.max(-1, Math.min(1, (this.controls.left ? 1 : 0) - (this.controls.right ? 1 : 0) + mouseTurn));
-    const targetTurnRate = turnInput * GAME_CONFIG.TURN_RATE * (this.planeStats.turn || 1) * (this.stalled ? 0.4 : 1);
-    const turnSmooth = Math.min(1, GAME_CONFIG.TURN_SMOOTHING * delta);
-    this.rotationVelocity += (targetTurnRate - this.rotationVelocity) * turnSmooth;
+    let targetTurnRate = turnInput * GAME_CONFIG.TURN_RATE * (this.planeStats.turn || 1) * (this.stalled ? 0.4 : 1);
+    // Arena edge: a steady pull back toward the land, flown as a real banked turn
+    const out = Math.hypot(ship.position.x, ship.position.z) - GAME_CONFIG.ARENA_RADIUS;
+    if (out > 0) {
+      const toCentre = Math.atan2(ship.position.x, ship.position.z); // heading that flies toward (0,0)
+      const d = wrapAngle(toCentre - this.shipRotation);
+      targetTurnRate += clamp(d * 3, -1, 1) * GAME_CONFIG.BOUNDARY_ASSIST * Math.min(1, out / 120);
+    }
+    this.rotationVelocity = damp(this.rotationVelocity, targetTurnRate, GAME_CONFIG.TURN_SMOOTHING, delta);
     this.shipRotation += this.rotationVelocity * delta;
     ship.rotation.y = this.shipRotation;
 
@@ -108,25 +117,29 @@ export class FlightMethods {
     const floorRoom = ship.position.y - GAME_CONFIG.MIN_ALTITUDE;
     if (targetPitch > 0 && headroom < 12) targetPitch *= Math.max(0, headroom / 12);
     if (targetPitch < 0 && floorRoom < 8) targetPitch *= Math.max(0, floorRoom / 8);
-    this.pitchAngle += (targetPitch - this.pitchAngle) * Math.min(1, GAME_CONFIG.PITCH_SMOOTHING * delta);
+    this.pitchAngle = damp(this.pitchAngle, targetPitch, GAME_CONFIG.PITCH_SMOOTHING, delta);
     ship.rotation.x = this.pitchAngle; // nose is at -Z, so +x pitches it up
 
     // Bank into the turn — roll proportional to the smoothed turn rate
     const targetBank = (this.rotationVelocity / GAME_CONFIG.TURN_RATE) * GAME_CONFIG.MAX_BANK_ANGLE;
-    const bankSmooth = Math.min(1, GAME_CONFIG.BANK_SMOOTHING * delta);
 
     // Barrel roll overrides banking: full 360° roll + sideways dodge
     if (this.rollCooldown > 0) this.rollCooldown -= delta;
     if (this.rollTimer > 0) {
+      // Starts from the bank the plane already has and eases in and out
+      if (this.rollFrom === null || this.rollFrom === undefined) this.rollFrom = ship.rotation.z;
       this.rollTimer = Math.max(0, this.rollTimer - delta);
       const progress = 1 - this.rollTimer / GAME_CONFIG.ROLL_DURATION;
-      ship.rotation.z = this.rollDir * Math.PI * 2 * progress;
+      const eased = progress * 0.55 + (0.5 - 0.5 * Math.cos(Math.PI * progress)) * 0.45;
+      ship.rotation.z = this.rollFrom + this.rollDir * Math.PI * 2 * eased;
+      // A full turn lands back on the same bank: unwind the number, not the plane
+      if (this.rollTimer === 0) { ship.rotation.z = wrapAngle(ship.rotation.z); this.rollFrom = null; }
       // Dodge sideways (perpendicular to facing) while rolling
       const dodge = GAME_CONFIG.ROLL_DODGE_SPEED * delta * this.rollDir;
       ship.position.x -= Math.cos(this.shipRotation) * dodge;
       ship.position.z += Math.sin(this.shipRotation) * dodge;
     } else {
-      ship.rotation.z += (targetBank - ship.rotation.z) * bankSmooth;
+      ship.rotation.z = damp(ship.rotation.z, targetBank, GAME_CONFIG.BANK_SMOOTHING, delta);
     }
 
     // Always flying forward — planes don't hover. W/S trim the throttle.
@@ -138,16 +151,9 @@ export class FlightMethods {
 
     if (this.crashGrace > 0) this.crashGrace -= delta;
 
-    // Arena edge: warn, then steer the plane back toward the land
-    const out = Math.hypot(ship.position.x, ship.position.z) - GAME_CONFIG.ARENA_RADIUS;
+    // Arena edge warning (the steering itself is part of the turn above)
     const boundaryEl = document.getElementById('boundary');
     if (out > 0) {
-      const toCentre = Math.atan2(ship.position.x, ship.position.z); // heading that flies toward (0,0)
-      let d = toCentre - this.shipRotation;
-      d = Math.atan2(Math.sin(d), Math.cos(d));
-      const strength = Math.min(1, out / 120);
-      this.shipRotation += Math.sign(d) * GAME_CONFIG.BOUNDARY_ASSIST * strength * delta;
-      ship.rotation.y = this.shipRotation;
       if (boundaryEl && !boundaryEl.classList.contains('show')) { boundaryEl.classList.add('show'); this.playSound('warning'); }
     } else if (boundaryEl && boundaryEl.classList.contains('show')) {
       boundaryEl.classList.remove('show');
@@ -219,8 +225,6 @@ export class FlightMethods {
     this.checkCollisions(ship);
     this.updateFlightInstruments(ship, speed, delta);
     this.updateOnboarding(ship, delta, speed);
-    this.updateWaypoint(ship);
-    this.updateTargeting(ship);
 
     // The key legend retires itself once you've had time to read it
     if (this.controlsPanelTimer > 0) {
@@ -231,43 +235,9 @@ export class FlightMethods {
       }
     }
 
-    const camBehind = 14;
-    const camUp = 8;
-    this.camera.position.x = ship.position.x + Math.sin(this.shipRotation) * camBehind;
-    const camTargetY = ship.position.y + camUp;
-    if (this.camY === undefined || Math.abs(this.camY - camTargetY) > 40) this.camY = camTargetY;
-    this.camY += (camTargetY - this.camY) * Math.min(1, delta * 9);
-    this.camera.position.y = this.camY;
-    this.camera.position.z = ship.position.z + Math.cos(this.shipRotation) * camBehind;
-    this.camera.lookAt(ship.position);
-
-    // Speed sensation: FOV widens as you go faster
-    const targetFov = 75 + (speed / GAME_CONFIG.BOOST_SPEED) * 10;
-    if (Math.abs(this.camera.fov - targetFov) > 0.05) {
-      this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, delta * 4);
-      this.camera.updateProjectionMatrix();
-    }
-
-    // Cockpit view, look-back and free look take over from the chase camera
-    const otherView = this.updateCameraMode(ship, speed, delta);
-    if (this.shakeTime > 0) this.shakeTime = Math.max(0, this.shakeTime - delta);
-
-    if (!otherView) {
-      // Camera leans into the bank (clamped so barrel rolls don't flip the view)
-      const camRoll = Math.max(-0.7, Math.min(0.7, ship.rotation.z)) * 0.35;
-      this.camera.rotateZ(camRoll);
-
-      // Impact shake: decaying random camera offset
-      if (this.shakeTime > 0) {
-        const s = this.shakeMag * (this.shakeTime / this.shakeDur);
-        this.camera.position.x += (Math.random() - 0.5) * s * 2;
-        this.camera.position.y += (Math.random() - 0.5) * s * 2;
-        this.camera.position.z += (Math.random() - 0.5) * s * 2;
-      }
-    }
-
-    // Photo mode: cinematic orbit around the plane
-    if (this.photoMode) this.updatePhotoCamera(ship, delta);
+    this.placeCamera(ship, speed, delta);
+    // Markers are drawn after the camera has settled for this frame (see animate)
+    this.flewThisFrame = true;
   }
 
   /** Compass, artificial horizon, terrain warning, vignettes, discoveries */
@@ -307,7 +277,7 @@ export class FlightMethods {
     // Vertical speed (metres per second in the HUD's 3x altitude scale)
     if (this.prevAltitude === null) this.prevAltitude = ship.position.y;
     const vs = delta > 0 ? (ship.position.y - this.prevAltitude) / delta * 3 : 0;
-    this.verticalSpeed += (vs - this.verticalSpeed) * Math.min(1, delta * 6);
+    this.verticalSpeed = damp(this.verticalSpeed, vs, 6, delta);
     this.prevAltitude = ship.position.y;
     ins.updateAttitude(this.pitchAngle, ship.rotation.z, ship.position.y * 3, this.verticalSpeed);
 
@@ -350,7 +320,7 @@ export class FlightMethods {
 
     // Screen-edge vignettes: boost rush and low health
     const boosting = this.controls.boost && this.localPlayer.energy > 0;
-    this.boostVignette += ((boosting ? 1 : 0) - this.boostVignette) * Math.min(1, delta * 5);
+    this.boostVignette = damp(this.boostVignette, boosting ? 1 : 0, 5, delta);
     const damage = this.playerHealth < 45 ? (1 - this.playerHealth / 45) * 0.75 : 0;
     ins.setVignettes({ boost: this.boostVignette * 0.6, damage });
 
@@ -431,7 +401,7 @@ export class FlightMethods {
     const right = this._shadowRight || (this._shadowRight = new THREE.Vector3());
     const up = this._shadowUp || (this._shadowUp = new THREE.Vector3());
     dir.subVectors(light.target.position, light.position).normalize();
-    right.crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
+    right.crossVectors(WORLD_UP, dir).normalize();
     up.crossVectors(dir, right).normalize();
     const anchor = light.target.position;
     const a = anchor.dot(right), b = anchor.dot(up);
@@ -458,7 +428,7 @@ export class FlightMethods {
 
     // Wind: slowly wandering direction, strength follows the weather
     this.wind.targetSpeed = this.weatherNow.wind || 7;
-    this.wind.speed += (this.wind.targetSpeed - this.wind.speed) * Math.min(1, delta * 0.2);
+    this.wind.speed = damp(this.wind.speed, this.wind.targetSpeed, 0.2, delta);
     this.wind.angle += Math.sin(this.animationTime * 0.05) * delta * 0.05;
     this.wind.x = Math.cos(this.wind.angle) * this.wind.speed;
     this.wind.z = Math.sin(this.wind.angle) * this.wind.speed;
@@ -566,7 +536,6 @@ export class FlightMethods {
       this.crashed = false;
       if (this.dead) return; // fatal crash — the server respawn takes over
       if (overlay) overlay.style.display = 'none';
-      this.pitchAngle = 0;
       this.crashGrace = GAME_CONFIG.CRASH_GRACE;
     }, GAME_CONFIG.CRASH_DURATION);
   }
@@ -582,22 +551,14 @@ export class FlightMethods {
     ship.position.x -= Math.sin(this.shipRotation) * speed * delta;
     ship.position.z -= Math.cos(this.shipRotation) * speed * delta;
     const targetY = Math.max(ship.position.y, GAME_CONFIG.RESPAWN_ALTITUDE);
-    ship.position.y += (targetY - ship.position.y) * Math.min(1, delta * 2.5);
-    ship.rotation.x += (0.25 - ship.rotation.x) * Math.min(1, delta * 4);
-    ship.rotation.z *= Math.exp(-3 * delta);
+    ship.position.y = damp(ship.position.y, targetY, 2.5, delta);
+    // The flight model picks up from this nose angle when control returns
+    this.pitchAngle = ship.rotation.x = damp(ship.rotation.x, 0.25, 4, delta);
+    ship.rotation.z = wrapAngle(ship.rotation.z) * Math.exp(-3 * delta);
+    this.rotationVelocity = damp(this.rotationVelocity, 0, 4, delta);
+    this.rollTimer = 0; this.rollFrom = null;
     this.updateTrail(this.localPlayer.id, ship.position);
     this.updateChunks(ship.position.x, ship.position.z);
-
-    const camBehind = 14, camUp = 8;
-    this.camera.position.x = ship.position.x + Math.sin(this.shipRotation) * camBehind;
-    this.camera.position.y = ship.position.y + camUp;
-    this.camera.position.z = ship.position.z + Math.cos(this.shipRotation) * camBehind;
-    this.camera.lookAt(ship.position);
-    if (this.shakeTime > 0) {
-      this.shakeTime = Math.max(0, this.shakeTime - delta);
-      const sh = this.shakeMag * (this.shakeTime / this.shakeDur);
-      this.camera.position.x += (Math.random() - 0.5) * sh * 2;
-      this.camera.position.y += (Math.random() - 0.5) * sh * 2;
-    }
+    this.placeCamera(ship, speed, delta);
   }
 }

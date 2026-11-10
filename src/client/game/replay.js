@@ -159,8 +159,10 @@ export class ReplayMethods {
     for (const [id, s] of this.players) wasVisible.set(id, s.visible);
     this.replay = {
       clip, kind, onEnd, t: clip.start, speed: 1, fired: new Set(), wasVisible, missiles: new Map(),
-      cam: this.camera.position.clone(), look: null,
+      cam: this.camera.position.clone(), look: null, mine: null,
     };
+    const me = this.localPlayer && this.players.get(this.localPlayer.id);
+    if (me) this.replay.mine = { pos: me.position.clone(), rot: me.rotation.clone() };
     document.body.classList.add('replaying');
     const el = document.getElementById('replay-overlay');
     if (el) {
@@ -188,7 +190,7 @@ export class ReplayMethods {
     const dt = r.t - c.focusTime;
     const slow = r.kind === 'final' ? 0.2 : r.kind === 'potm' ? 0.3 : 0.32;
     const target = dt > -0.85 && dt < 0.55 ? slow : 1;
-    r.speed += (target - r.speed) * Math.min(1, realDelta * 7);
+    r.speed += (target - r.speed) * (1 - Math.exp(-7 * realDelta));
     this.timeScale = r.speed;
     if (this.audio) {
       this.audio.rateScale = 0.55 + 0.45 * r.speed;
@@ -267,7 +269,14 @@ export class ReplayMethods {
     this.replay = null;
     for (const [, mesh] of r.missiles) this.scene.remove(mesh);
     for (const [id, ship] of this.players) {
-      if (this.localPlayer && id === this.localPlayer.id) ship.visible = !this.dead;
+      if (this.localPlayer && id === this.localPlayer.id) {
+        ship.visible = !this.dead;
+        // Carry on from where we really are, not from the replayed pose
+        if (r.mine) { ship.position.copy(r.mine.pos); ship.rotation.copy(r.mine.rot); }
+        // No streak across the sky from the replayed pose
+        const trail = this.trails.get(id);
+        if (trail) trail.points.length = 0;
+      }
       else ship.visible = r.wasVisible.has(id) ? r.wasVisible.get(id) : true;
     }
     // Replay tracers vanish with the replay

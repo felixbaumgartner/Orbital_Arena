@@ -2,6 +2,7 @@
 // Methods are mixed into the Game class (see game.js); `this` is the Game.
 import * as THREE from 'three';
 import { GAME_CONFIG } from '../config.js';
+import { damp } from './smooth.js';
 
 export class AirfieldMethods {
   // =========================================================================
@@ -142,9 +143,10 @@ export class AirfieldMethods {
       this.takeoffSpeed = Math.min(100, this.takeoffSpeed + 20 * delta);
       ship.position.z -= this.takeoffSpeed * delta;
 
-      const liftProgress = this.takeoffTimer / GAME_CONFIG.TAKEOFF_LIFTOFF_DURATION;
-      ship.position.y = 1 + liftProgress * 10;
-      ship.rotation.x = 0.15; // Nose up
+      // The wheels leave gently and the climb steepens (no sudden jump in pitch or height)
+      const liftProgress = Math.min(1, this.takeoffTimer / GAME_CONFIG.TAKEOFF_LIFTOFF_DURATION);
+      ship.position.y = 1 + liftProgress * liftProgress * 10;
+      ship.rotation.x = damp(ship.rotation.x, 0.15, 5, delta); // Nose up
 
       if (takeoffText) takeoffText.textContent = 'LIFTOFF!';
 
@@ -158,10 +160,13 @@ export class AirfieldMethods {
       // Climb to cruise altitude
       ship.position.z -= this.takeoffSpeed * delta;
 
-      const climbProgress = Math.min(1, this.takeoffTimer / GAME_CONFIG.TAKEOFF_CLIMB_DURATION);
-      const currentY = 11 + climbProgress * (GAME_CONFIG.FLIGHT_HEIGHT - 11);
-      ship.position.y = currentY;
-      ship.rotation.x = 0.15 * (1 - climbProgress); // Level out
+      // Carries on at the rate liftoff ended with, then rounds off level at cruise height
+      const p = Math.min(1, this.takeoffTimer / GAME_CONFIG.TAKEOFF_CLIMB_DURATION);
+      const rise = GAME_CONFIG.FLIGHT_HEIGHT - 11;
+      const m0 = (20 / GAME_CONFIG.TAKEOFF_LIFTOFF_DURATION) * GAME_CONFIG.TAKEOFF_CLIMB_DURATION / rise;
+      const curve = (p * p * p - 2 * p * p + p) * m0 + (3 * p * p - 2 * p * p * p);
+      ship.position.y = 11 + curve * rise;
+      ship.rotation.x = damp(ship.rotation.x, 0.15 * (1 - p), 5, delta); // Level out
 
       if (takeoffText) takeoffText.textContent = 'CLIMBING...';
 
@@ -169,21 +174,19 @@ export class AirfieldMethods {
         this.takeoffPhase = null;
         this.controlsEnabled = true;
         this.onAirborne();
-        ship.rotation.x = 0;
-        this.pitchAngle = 0;
+        // Hand over at the speed and nose angle we actually have; the flight
+        // model settles to cruise from there instead of the speed halving
+        this.airspeed = this.takeoffSpeed;
+        this.pitchAngle = ship.rotation.x;
         ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
 
         if (overlay) overlay.style.display = 'none';
       }
     }
 
-    // Camera follows during takeoff
-    const camBehind = 14;
-    const camUp = 8;
-    this.camera.position.x = ship.position.x + Math.sin(this.shipRotation) * camBehind;
-    this.camera.position.y = ship.position.y + camUp;
-    this.camera.position.z = ship.position.z + Math.cos(this.shipRotation) * camBehind;
-    this.camera.lookAt(ship.position);
+    // Camera follows during takeoff, looking where the nose points
+    if (this.takeoffPhase) this.pitchAngle = ship.rotation.x;
+    this.placeCamera(ship, this.takeoffSpeed, delta);
 
     // Move ground/clouds/chunks with ship during takeoff
     this.updateChunks(ship.position.x, ship.position.z);
@@ -203,6 +206,8 @@ export class AirfieldMethods {
     ship.rotation.x = 0;
     this.pitchAngle = 0;
     ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
+    this.airspeed = Math.max(this.airspeed, this.takeoffSpeed);
+    this.resetChaseCamera();
 
     const overlay = document.getElementById('takeoff-overlay');
     if (overlay) overlay.style.display = 'none';

@@ -171,7 +171,7 @@ export class ProgressionMethods {
     const tx = ship.position.x + Math.sin(this.shipRotation) * back + Math.cos(this.shipRotation) * side;
     const tz = ship.position.z + Math.cos(this.shipRotation) * back - Math.sin(this.shipRotation) * side;
     const ty = ship.position.y + up + Math.sin(this.animationTime * 1.7) * 0.8;
-    const k = Math.min(1, delta * 2.2);
+    const k = 1 - Math.exp(-2.2 * delta);
     this.stork.position.x += (tx - this.stork.position.x) * k;
     this.stork.position.y += (ty - this.stork.position.y) * k;
     this.stork.position.z += (tz - this.stork.position.z) * k;

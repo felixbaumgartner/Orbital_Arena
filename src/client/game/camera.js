@@ -5,6 +5,7 @@
 // Methods are mixed into the Game class (see game.js); `this` is the Game.
 import * as THREE from 'three';
 import { GAME_CONFIG } from '../config.js';
+import { damp, dampAngle, wrapAngle, clamp, smoothstep, noise1 } from './smooth.js';
 
 /** Own plane renders on this layer so the cockpit camera can skip it */
 export const OWN_PLANE_LAYER = 1;
@@ -17,7 +18,19 @@ const EYE = {
   primitive: new THREE.Vector3(0, 1.1, -2.2),
 };
 
+/** Chase view: distance, height angle above the tail, and how far it trails */
+const CHASE = { dist: 16, boostDist: 18.5, elev: 0.25, lookAhead: 220, yawLag: 13, pitchLag: 9, maxYawLag: 0.3, maxPitchLag: 0.2 };
+/** Seconds to blend when the view changes hands (anything else: 0.45) */
+const BLEND = {
+  'chase>cockpit': 0.35, 'cockpit>chase': 0.35,
+  'death>replay': 0.5, 'chase>replay': 0.5, 'cockpit>replay': 0.5,
+  'replay>chase': 0.6, 'replay>cockpit': 0.6, 'death>chase': 0.6, 'death>cockpit': 0.6,
+};
+
 const _q = new THREE.Quaternion();
+const _q2 = new THREE.Quaternion();
+const _pos = new THREE.Vector3();
+const _target = new THREE.Vector3();
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _v = new THREE.Vector3();
 
@@ -29,6 +42,13 @@ export class CameraMethods {
   initCameraModes() {
     this.cameraMode = 'chase';
     this.look = { yaw: 0, pitch: 0, back: false };
+    this.cam = {
+      rig: null, prevRig: null, cut: false, t: 0,
+      yaw: null, pitch: 0, dist: CHASE.dist, roll: 0, fov: 75, orbit: 0,
+      shake: 0, shakeRate: 0, kick: 0, drift: new THREE.Vector3(),
+      blend: 1, blendDur: 0, fromPos: new THREE.Vector3(), fromQuat: new THREE.Quaternion(), fromAnchored: false,
+      lastPos: new THREE.Vector3(), lastQuat: new THREE.Quaternion(), lastAnchor: new THREE.Vector3(), lastAnchored: false,
+    };
     this.cockpit = null;
     // The camera must be in the scene for the cockpit (its child) to render
     this.scene.add(this.camera);
@@ -41,12 +61,6 @@ export class CameraMethods {
     if (ship) ship.traverse((o) => o.layers.set(OWN_PLANE_LAYER));
   }
 
-  /** Every frame starts in chase terms; the cockpit branch flips it back */
-  resetCameraLayers() {
-    this.camera.layers.enable(OWN_PLANE_LAYER);
-    if (this.cockpit) this.cockpit.visible = false;
-  }
-
   toggleCameraMode() {
     this.setCameraMode(this.cameraMode === 'chase' ? 'cockpit' : 'chase');
   }
@@ -55,9 +69,6 @@ export class CameraMethods {
     this.cameraMode = mode;
     const cockpit = mode === 'cockpit';
     if (cockpit && !this.cockpit) this.buildCockpit();
-    if (this.cockpit) this.cockpit.visible = cockpit;
-    if (cockpit) this.camera.layers.disable(OWN_PLANE_LAYER);
-    else this.camera.layers.enable(OWN_PLANE_LAYER);
     document.body.classList.toggle('cockpit', cockpit);
     this.instruments.toast(cockpit ? '🛩️' : '🎥', cockpit ? 'Cockpit view' : 'Chase view', `${this.isTouch ? '' : 'V'} to switch · ${this.isTouch ? '' : 'Z to look back'}`);
   }
@@ -187,57 +198,172 @@ export class CameraMethods {
     this.gaugeTex.needsUpdate = true;
   }
 
+  /** Forget the chase camera's lag (after a spawn or teleport) */
+  resetChaseCamera() {
+    if (!this.cam) return;
+    this.cam.yaw = null;
+    this.cam.cut = true;
+  }
+
+  /** A short push back from the guns: felt, but the aim point never moves */
+  camKick(amount) {
+    if (this.cam) this.cam.kick = Math.max(this.cam.kick, amount);
+  }
+
   /**
-   * Places the camera for the current mode after the plane has moved.
-   * Returns true when it handled the camera (cockpit or look-back).
+   * Places the camera after the plane has moved: the chase view or the
+   * cockpit, with look-back and free look folded into both.
    */
-  updateCameraMode(ship, speed, delta) {
-    // Free look eases back to centre when released
-    const L = this.look;
+  placeCamera(ship, speed, delta) {
+    const C = this.cam, L = this.look;
+    C.t += delta;
+    // Free look eases toward the stick and back to centre when released
     if (this.padLook) {
-      L.yaw += (this.padLook.x * 1.9 - L.yaw) * Math.min(1, delta * 8);
-      L.pitch += (this.padLook.y * 0.9 - L.pitch) * Math.min(1, delta * 8);
+      L.yaw = damp(L.yaw, this.padLook.x * 1.9, 8, delta);
+      L.pitch = damp(L.pitch, this.padLook.y * 0.9, 8, delta);
     } else {
-      L.yaw *= Math.exp(-6 * delta);
-      L.pitch *= Math.exp(-6 * delta);
+      L.yaw = damp(L.yaw, 0, 6, delta);
+      L.pitch = damp(L.pitch, 0, 6, delta);
     }
-    const back = L.back;
-    if (this.cameraMode === 'cockpit') {
-      // This frame is drawn from the seat: hide our own plane, show the cockpit
-      this.camera.layers.disable(OWN_PLANE_LAYER);
-      if (this.cockpit) this.cockpit.visible = true;
-      const plane = ship.userData.plane && EYE[ship.userData.plane] && ship.userData.props ? ship.userData.plane : 'primitive';
-      _v.copy(EYE[plane]).applyEuler(ship.rotation).add(ship.position);
-      this.camera.position.copy(_v);
-      _q.setFromEuler(ship.rotation);
-      _e.set(-L.pitch, (back ? Math.PI : 0) - L.yaw, 0, 'YXZ');
-      this.camera.quaternion.copy(_q).multiply(new THREE.Quaternion().setFromEuler(_e));
-      // Engine vibration and impacts shake the cockpit
-      const buzz = 0.003 + Math.min(1, speed / 130) * 0.004;
-      this.camera.position.x += (Math.random() - 0.5) * buzz;
-      this.camera.position.y += (Math.random() - 0.5) * buzz;
-      if (this.shakeTime > 0) {
-        const s = this.shakeMag * (this.shakeTime / this.shakeDur) * 0.25;
-        this.camera.position.x += (Math.random() - 0.5) * s;
-        this.camera.position.y += (Math.random() - 0.5) * s;
+    // Look-back swings round instead of cutting
+    C.orbit = damp(C.orbit, (L.back ? Math.PI : 0) - L.yaw, 14, delta);
+    C.shake = Math.max(0, C.shake - C.shakeRate * delta);
+    C.kick = damp(C.kick, 0, 16, delta);
+    // Speed sensation: the view widens as you go faster
+    C.fov = damp(C.fov, 74 + smoothstep(45, 105, speed) * 12, 3, delta);
+
+    if (this.cameraMode === 'cockpit' && !this.takeoffPhase) this.cockpitCamera(ship, speed, delta);
+    else this.chaseCamera(ship, speed, delta);
+
+    // Photo mode: cinematic orbit around the plane
+    if (this.photoMode) this.updatePhotoCamera(ship, delta);
+  }
+
+  /**
+   * Chase view. The camera trails the plane with a little lag in heading
+   * and pitch, but always looks down the gun line, so the centre of the
+   * screen is exactly where the guns point.
+   */
+  chaseCamera(ship, speed, delta) {
+    const C = this.cam, L = this.look, cam = this.camera;
+    const yawT = this.shipRotation, pitchT = this.pitchAngle;
+    if (C.yaw === null) { C.yaw = yawT; C.pitch = pitchT; C.roll = 0; C.dist = CHASE.dist; }
+    C.yaw = yawT + clamp(wrapAngle(dampAngle(C.yaw, yawT, CHASE.yawLag, delta) - yawT), -CHASE.maxYawLag, CHASE.maxYawLag);
+    C.pitch = pitchT + clamp(damp(C.pitch, pitchT, CHASE.pitchLag, delta) - pitchT, -CHASE.maxPitchLag, CHASE.maxPitchLag);
+    const boosting = this.controlsEnabled && this.controls.boost && this.localPlayer.energy > 0;
+    C.dist = damp(C.dist, boosting ? CHASE.boostDist : CHASE.dist, 3, delta);
+
+    // 0 = flying view, 1 = swung round the plane (look back / free look)
+    const w = smoothstep(0.1, 0.6, Math.abs(C.orbit));
+    const yaw = C.yaw + C.orbit;
+    const elev = (CHASE.elev - C.pitch) * (1 - w) + (0.41 + L.pitch * 0.6) * w;
+    const d = C.dist + C.kick;
+    const ce = Math.cos(elev);
+    _pos.set(
+      ship.position.x + Math.sin(yaw) * ce * d,
+      Math.max(2.5, ship.position.y + Math.sin(elev) * d),
+      ship.position.z + Math.cos(yaw) * ce * d,
+    );
+    // Same nose direction the guns fire along
+    const cp = Math.cos(pitchT), sp = Math.sin(pitchT);
+    _target.set(
+      ship.position.x - Math.sin(yawT) * cp * CHASE.lookAhead,
+      ship.position.y + sp * CHASE.lookAhead,
+      ship.position.z - Math.cos(yawT) * cp * CHASE.lookAhead,
+    );
+    if (w > 0) _target.lerp(ship.position, w);
+    cam.position.copy(_pos);
+    cam.lookAt(_target);
+
+    // Lean into the bank (level through a barrel roll so the view doesn't flip)
+    const bank = this.rollTimer > 0 ? 0 : clamp(wrapAngle(ship.rotation.z), -0.7, 0.7) * 0.35 * (1 - w);
+    C.roll = damp(C.roll, bank, 6, delta);
+    cam.rotateZ(C.roll + noise1(C.t * 33, 5) * C.shake * 0.02);
+    // Impacts rattle the camera sideways and up/down; the view direction holds
+    if (C.shake > 0.001) {
+      cam.translateX(noise1(C.t * 41, 1) * C.shake);
+      cam.translateY(noise1(C.t * 37, 2) * C.shake);
+    }
+  }
+
+  /** First-person view from the pilot's seat */
+  cockpitCamera(ship, speed, delta) {
+    const C = this.cam, L = this.look, cam = this.camera;
+    const plane = ship.userData.plane && EYE[ship.userData.plane] && ship.userData.props ? ship.userData.plane : 'primitive';
+    _v.copy(EYE[plane]).applyEuler(ship.rotation).add(ship.position);
+    cam.position.copy(_v);
+    _q.setFromEuler(ship.rotation);
+    _e.set(-L.pitch, C.orbit, 0, 'YXZ');
+    cam.quaternion.copy(_q).multiply(_q2.setFromEuler(_e));
+    // Engine vibration and impacts shake the cockpit
+    const buzz = 0.002 + Math.min(1, speed / 130) * 0.003 + C.shake * 0.12;
+    cam.translateX(noise1(C.t * 90, 3) * buzz);
+    cam.translateY(noise1(C.t * 77, 4) * buzz);
+    if (this.propDisc) this.propDisc.rotation.z += delta * 40;
+    if (this.cockpitPaint && ship.userData.bodyColor) this.cockpitPaint.color.copy(ship.userData.bodyColor);
+    this.updateGauges(speed, ship.position.y, ((-this.shipRotation * 180 / Math.PI) % 360 + 360) % 360, this.verticalSpeed || 0);
+  }
+
+  /**
+   * Runs once a frame after every camera (flight, replay, photo, intro) has
+   * had its say. When the view changes hands it blends from the last frame
+   * drawn instead of cutting, then publishes the final matrices so the HUD
+   * markers project against the camera that is actually rendered.
+   */
+  finishCamera(dt) {
+    const C = this.cam, cam = this.camera;
+    const me = this.localPlayer ? this.players.get(this.localPlayer.id) : null;
+    const rig = this.replay ? 'replay' : !me ? 'intro' : this.dead ? 'death'
+      : this.photoMode ? 'photo' : (this.cameraMode === 'cockpit' && !this.takeoffPhase) ? 'cockpit' : 'chase';
+    const anchored = !!me && (rig === 'chase' || rig === 'cockpit' || rig === 'photo');
+
+    if (rig !== C.rig) {
+      let dur = 0;
+      if (C.rig !== null && !C.cut && C.rig !== 'intro' && rig !== 'intro' && rig !== 'death') {
+        dur = BLEND[`${C.rig}>${rig}`] ?? (rig === 'photo' || C.rig === 'photo' ? 0.6 : 0.45);
+        // A jump across the map is a cut, not a swoop
+        if (C.lastPos.distanceTo(cam.position) > 140) dur = 0;
       }
-      if (this.propDisc) this.propDisc.rotation.z += delta * 40;
-      if (this.cockpitPaint && ship.userData.bodyColor) this.cockpitPaint.color.copy(ship.userData.bodyColor);
-      this.updateGauges(speed, ship.position.y, ((-this.shipRotation * 180 / Math.PI) % 360 + 360) % 360, this.verticalSpeed || 0);
-      return true;
+      if (rig === 'death' && this.localPlayer) {
+        // Shot down: the camera coasts on for a moment instead of freezing
+        const v = this.shipVelocity(this.localPlayer.id);
+        C.drift.set(v.x, v.y, v.z).multiplyScalar(0.3);
+      }
+      C.prevRig = C.rig; C.rig = rig; C.blendDur = dur; C.blend = dur > 0 ? 0 : 1;
+      C.fromAnchored = anchored && C.lastAnchored;
+      C.fromPos.copy(C.lastPos);
+      if (C.fromAnchored) C.fromPos.sub(C.lastAnchor);
+      C.fromQuat.copy(C.lastQuat);
     }
-    if (back || Math.abs(L.yaw) > 0.02 || Math.abs(L.pitch) > 0.02) {
-      // Chase camera swung around the plane (look back / free look)
-      const yaw = this.shipRotation + (back ? Math.PI : 0) - L.yaw;
-      const dist = 16;
-      this.camera.position.set(
-        ship.position.x + Math.sin(yaw) * dist,
-        ship.position.y + 7 + L.pitch * 10,
-        ship.position.z + Math.cos(yaw) * dist,
-      );
-      this.camera.lookAt(ship.position);
-      return true;
+    C.cut = false;
+
+    if (rig === 'death') {
+      cam.position.addScaledVector(C.drift, dt);
+      if (cam.position.y < 3) cam.position.y = 3;
+      C.drift.multiplyScalar(Math.exp(-1.6 * dt));
     }
-    return false;
+
+    if (C.blend < 1) {
+      C.blend = Math.min(1, C.blend + dt / C.blendDur);
+      const s = smoothstep(0, 1, C.blend);
+      _pos.copy(C.fromPos);
+      if (C.fromAnchored && me) _pos.add(me.position);
+      _target.copy(cam.position);
+      cam.position.lerpVectors(_pos, _target, s);
+      _q2.copy(cam.quaternion);
+      cam.quaternion.slerpQuaternions(C.fromQuat, _q2, s);
+    }
+
+    // The cockpit shell belongs to whichever view is on screen right now
+    const inCockpit = (C.blend < 0.5 ? C.prevRig : rig) === 'cockpit';
+    if (inCockpit) cam.layers.disable(OWN_PLANE_LAYER); else cam.layers.enable(OWN_PLANE_LAYER);
+    if (this.cockpit) this.cockpit.visible = inCockpit;
+
+    if (Math.abs(cam.fov - C.fov) > 0.02) { cam.fov = C.fov; cam.updateProjectionMatrix(); }
+    C.lastPos.copy(cam.position);
+    C.lastQuat.copy(cam.quaternion);
+    C.lastAnchored = anchored;
+    if (me) C.lastAnchor.copy(me.position);
+    cam.updateMatrixWorld(true);
   }
 }

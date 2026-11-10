@@ -4,9 +4,12 @@ A multiplayer flight-combat game over an endless, living Dutch landscape: tulip 
 
 ## The story
 
-Two rival villages, Oostwijk and Westerhaven, fly for the Windmill Cup. Hold the most windmills when the bell rings at last light, and the Cup is yours.
+Sky raiders have come for the harvest. Every windmill they take, they loot and burn. You are one of the village's last three pilots: take the mills back and hold them until the bell.
 
-It is told by one voice. The lighthouse keeper who judges the Cup speaks once per round (the opening, the turning point, last light) and gives the verdict on the end screen.
+- **Everything on screen follows from that.** Every mill you hold saves grain and every mill the raiders hold, they steal it; whoever has more when the bell rings wins the raid. A match is three raids, and winning two saves the harvest.
+- **You are always the village.** Whichever team the server puts you on, your side is blue and on the left of the score; the other team are the raiders, in black and red. Blue windmills are safe, burning ones are taken.
+- **An opening and an ending.** A skippable three-shot opening scene plays on a first visit (one short shot after that), and every match ends on a scene of what your flying did to the village.
+- **One voice.** The miller speaks on the radio once per raid, and one line under the score always says where things stand and what to do next.
 
 ## Features
 

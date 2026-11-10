@@ -2076,7 +2076,7 @@
 
         /* ---- One message line, top centre ---- */
         #notice {
-            position: fixed; top: 4.9rem; left: 50%; transform: translate(-50%, -6px);
+            position: fixed; top: 6.3rem; left: 50%; transform: translate(-50%, -6px);
             display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 0.15rem 0.55rem;
             max-width: min(92vw, 640px); padding: 0.32rem 0.95rem; border-radius: 12px; text-align: center;
             background: rgba(8, 14, 20, 0.6); border: 1px solid var(--glass-border);
@@ -2092,7 +2092,7 @@
         #notice.story { border-color: rgba(255, 210, 63, 0.35); }
         #notice.story .n-title { font-style: italic; font-weight: 600; }
         body.replaying #notice, body.hud-full #notice { display: none; }
-        body.touch #notice { top: 3.5rem; font-size: 0.85rem; padding: 0.22rem 0.7rem; }
+        body.touch #notice { top: 4.5rem; font-size: 0.85rem; padding: 0.22rem 0.7rem; }
 
         #score-clock { min-width: 4.4rem; text-align: center; color: #fff; font-variant-numeric: tabular-nums; }
         #score-clock.low { color: #ff5555; }
@@ -2150,7 +2150,7 @@
         }
         body.hud-min:not(.touch) #radar { top: 1rem; }
         body.hud-min:not(.touch) #notify-column { top: calc(1rem + 178px); width: 250px; }
-        body.hud-min:not(.touch) #capture-progress { top: 7.5rem; }
+        body.hud-min:not(.touch) #capture-progress { top: 8.9rem; }
 
         body.touch.hud-min .health-container { top: 6.2rem; bottom: auto; }
         body.touch.hud-min .energy-container { top: 7.5rem; bottom: auto; }
@@ -2161,30 +2161,90 @@
             #curtain, #curtain.on, #notice, #intermission, #end-screen, #end-screen #end-card,
             body::before, body::after { transition-duration: 0.01s; }
         }
+
+        /* =====================================================================
+           The Raiders: one colour for friends, one for foes, whichever team
+           the server put you on; the story scenes; the orders line
+           ===================================================================== */
+        :root { --us: #6bb6ff; --them: #ff6257; }
+        body.side-red { --red: var(--us); --blue: var(--them); }
+        body.side-blue { --blue: var(--us); --red: var(--them); }
+
+        #score-bar #score-red.us { color: var(--us); }
+        #score-bar #score-blue.them { color: var(--them); }
+        .nav-row.mill-red, .edge-marker.mill-red, .tag.red { color: var(--red); }
+        .nav-row.mill-blue, .edge-marker.mill-blue, .tag.blue { color: var(--blue); }
+        .tag.blue.mine-team, .tag.red.mine-team { color: var(--us); }
+
+        /* A small blue chevron over every wingman */
+        .friend-pip {
+            position: absolute; width: 0; height: 0; transform: translate(-50%, -100%);
+            border-left: 6px solid transparent; border-right: 6px solid transparent;
+            border-top: 9px solid var(--us); filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+            opacity: 0.9;
+        }
+
+        /* Where things stand and what to do about it, in one line */
+        #orders {
+            margin-top: 0.25rem; text-align: center; font-size: 0.82rem; letter-spacing: 0.05em;
+            color: #e6edf2; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+        }
+        #orders.bad { color: #ffb0a8; }
+        #orders.good { color: #a9d6ff; }
+        #orders:empty { display: none; }
+        body.touch #orders { font-size: 0.7rem; margin-top: 0.1rem; }
+
+        /* Story scenes: letterbox, one sentence at a time, nothing else */
+        body.cine::before, body.cine::after { transform: none; }
+        #cine {
+            position: fixed; left: 0; right: 0; bottom: 0; height: 11vh; z-index: 1160;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            pointer-events: none; opacity: 0; transition: opacity 0.15s ease;
+        }
+        #cine.on { opacity: 1; transition: opacity 0.5s ease; }
+        body.ended #cine .cine-skip, #cine.nohint .cine-skip { display: none; }
+        #cine .cine-cap {
+            max-width: min(92vw, 900px); text-align: center; color: #f3ead2;
+            font-size: clamp(0.95rem, 2.1vw, 1.45rem); letter-spacing: 0.03em; line-height: 1.25;
+        }
+        #cine .cine-skip { margin-top: 0.2rem; font-size: 0.62rem; letter-spacing: 0.2em; color: #7f8b93; text-transform: uppercase; }
+        #hud { transition: opacity 0.4s ease; }
+        body.cine #hud, body.ended #hud { opacity: 0; pointer-events: none; }
+        body.cine #notice, body.ended #notice, body.cine #team-banner, body.cine #chat,
+        body.cine #notify-column, body.ended #notify-column { display: none; }
+        #dispatch .raid { color: var(--them); }
+        #dispatch .home { color: var(--us); }
+        #replay-story {
+            background: none; border: none; color: #9fb3bf; font: inherit; font-size: 0.72rem;
+            letter-spacing: 0.08em; text-decoration: underline; cursor: pointer; padding: 0.1rem 0.3rem;
+        }
+        #replay-story:hover { color: #fff; }
     </style>
 </head>
 <body>
     <div id="game-container"></div>
+    <div id="cine"><div class="cine-cap"></div><div class="cine-skip">Click or press any key to skip</div></div>
 
     <div id="ui-overlay">
         <div id="login-screen" class="ui-element">
             <div id="login-form">
                 <h1>Dutch Village Flight</h1>
-                <h2>The Windmill Cup</h2>
-                <p id="dispatch">Two rival villages, <b class="red">Oostwijk</b> and <b class="blue">Westerhaven</b>, fly for the Windmill Cup.
-                Hold the most windmills when the bell rings at last light, and the Cup is yours.</p>
+                <h2>The Last Three Pilots</h2>
+                <p id="dispatch"><b class="raid">Sky raiders</b> have come for the harvest. Every windmill they take, they loot and burn.
+                You are one of <b class="home">the village's</b> last three pilots. Take the mills back and hold them until the bell.
+                <button type="button" id="replay-story">Watch the story again</button></p>
 
                 <div id="login-rank">Lv 1 · Cadet · 0 XP</div>
                 <div id="mode-picker">
                     <label class="mode-card">
                         <input type="radio" name="mode" value="domination" checked>
-                        <span class="mode-title">Windmill Domination</span>
-                        <span class="mode-sub">Hold the five windmills. Kills score too.</span>
+                        <span class="mode-title">Defend the Mills</span>
+                        <span class="mode-sub">The story. Take the five windmills back from the raiders.</span>
                     </label>
                     <label class="mode-card">
                         <input type="radio" name="mode" value="tdm">
-                        <span class="mode-title">Team Deathmatch</span>
-                        <span class="mode-sub">First team to 30 kills. Nothing else matters.</span>
+                        <span class="mode-title">Dogfight</span>
+                        <span class="mode-sub">No mills. First side to 30 shoot-downs.</span>
                     </label>
                 </div>
                 <div id="plane-picker">
@@ -2282,6 +2342,7 @@
                     <span id="score-blue" class="score-pill">0 BLUE</span>
                 </div>
                 <div id="mill-dots" title="Windmills held"><span class="dots-label">Windmills held</span><span id="windmill-status"></span></div>
+                <div id="orders"></div>
             </div>
 
             <canvas id="compass" width="440" height="44"></canvas>
@@ -2522,9 +2583,9 @@
             <h2>Welcome, pilot</h2>
             <p>Your plane always flies forward. Steer it with the <strong style="display:inline">mouse</strong> (click the world) or <strong style="display:inline">A / D</strong>, climb and dive with <strong style="display:inline">↑ / ↓</strong>.</p>
             <p><strong>Win</strong></p>
-            <p>Follow the yellow marker to a windmill and fly inside its big glowing circle until the bar fills. Owned windmills score every few seconds. Shooting down enemy planes scores too.</p>
-            <p><strong>Relax</strong></p>
-            <p>You fly for whichever village needs a pilot. The lighthouse keeper judges the Cup: when her bell rings at last light, the village holding the most windmills wins.</p>
+            <p>Follow the marker to a windmill and fly circles inside its glowing ring until the bar fills. Every mill you hold saves grain; every mill the raiders hold, they steal it. Whoever has more when the bell rings wins the raid. Win two raids to save the harvest.</p>
+            <p><strong>Friend or foe</strong></p>
+            <p>Blue is the village: blue planes are your wingmen and blue windmills are safe. Black and red planes are raiders, and a burning windmill is one they have taken.</p>
             <p>Bots leave you alone for your first minute in the air, and we'll walk you through the controls once you're airborne.</p>
             <button id="tutorial-close">Take off! 🛫</button>
         </div>

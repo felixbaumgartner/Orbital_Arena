@@ -74,7 +74,7 @@ export class TerrainMethods {
     const objs = [], cols = [];
     this.addLighthouse(0, -(R - 30), 'static', objs, cols);
     this.addLighthouse(0, R - 30, 'static', objs, cols);
-    this.registerLandmark('static', 0, -(R - 30), '🗼', 'The North Light', 'The keeper judges the Cup from up there. She has never been wrong, she says.');
+    this.registerLandmark('static', 0, -(R - 30), '🗼', 'The North Light', 'The keeper rings the bell from up there when a raid is over. She has never been wrong, she says.');
     this.registerLandmark('static', 0, R - 30, '🗼', 'The South Light', 'Where the first race was flown in 1935, in a plane made of bicycle parts.');
     this.staticColliders = cols;
     this.obstacles.set('static', this.staticColliders);
@@ -120,7 +120,7 @@ export class TerrainMethods {
     batch.add('glow', { geo: new THREE.SphereGeometry(1.2, 8, 6), x: cx, y: 63, z: cz - 26 });
     cols.push({ x: cx, z: cz, radius: 24, topY: 28 });
     cols.push({ x: cx, z: cz - 26, radius: 6, topY: 64 });
-    this.registerLandmark('static', cx, cz, '⛪', 'The Cathedral', 'Its bell was cast from a windmill\'s old gears. It rings when the Cup is decided.');
+    this.registerLandmark('static', cx, cz, '⛪', 'The Cathedral', 'Its bell was cast from a windmill\'s old gears. It rings when a raid is over.');
 
     // Wind farm shortcut: six turbines on the line from East mill to Hill mill
     for (let i = 0; i < 6; i++) {
@@ -545,16 +545,16 @@ export class TerrainMethods {
     const landmarkRoll = (coastal || canalColumn) ? 1 : rnd(4242);
     if (landmarkRoll < 0.025) {
       this.addCastle(baseX + CS / 2, baseZ + CS / 2, objects, colliders);
-      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🏰', 'Slot Zonneveld', 'The count who built it lost the first Cup and never flew again.');
+      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🏰', 'Slot Zonneveld', 'The count who built it fled the first raid and never came back.');
     } else if (landmarkRoll < 0.05) {
       this.addLighthouse(baseX + CS / 2, baseZ + CS / 2, chunkKey, objects, colliders);
-      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🗼', 'Lake Light', 'Lit every night since the Cup began, in case a pilot goes down in the lake.');
+      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🗼', 'Lake Light', 'Lit every night since the raids began, in case a pilot goes down in the lake.');
     } else if (landmarkRoll < 0.07) {
       for (let i = 0; i < 4; i++) {
         const s = seed + 4300 + i * 31;
         this.addHotAirBalloon(baseX + 40 + this.seededRandom(s) * (CS - 80), baseZ + 40 + this.seededRandom(s + 1) * (CS - 80), s + 2, chunkKey, objects);
       }
-      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🎈', 'Balloon Festival', 'The balloonists claim they invented the Cup. Nobody has ever let them compete.');
+      this.registerLandmark(chunkKey, baseX + CS / 2, baseZ + CS / 2, '🎈', 'Balloon Festival', 'The balloonists say they would fight the raiders too, if only the wind would agree.');
     }
 
     // --- Magic tulip power-up (any biome) ---
@@ -611,7 +611,7 @@ export class TerrainMethods {
       colliders.push(t.collider);
       this.registerAmbient(chunkKey, { mesh: t.rotor, type: 'turbine' });
     }
-    this.registerLandmark(chunkKey, sx + Math.cos(dir) * 55, sz + Math.sin(dir) * 55, '🌬️', 'Wind Farm', 'Westerhaven money. Oostwijk says it spoils the view; Oostwijk flies through it anyway.');
+    this.registerLandmark(chunkKey, sx + Math.cos(dir) * 55, sz + Math.sin(dir) * 55, '🌬️', 'Wind Farm', 'The new mills. The old millers say they spoil the view, and fly through them anyway.');
   }
 
   registerLandmark(chunkKey, x, z, icon, name, subtitle) {

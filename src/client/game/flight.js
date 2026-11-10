@@ -282,7 +282,7 @@ export class FlightMethods {
       const state = this.windmillStates[mill.id];
       markers.push({
         rel: bearingTo(mill.x, mill.z), size: 5,
-        color: state?.team === 'red' ? '#ff5555' : state?.team === 'blue' ? '#5599ff' : '#dddddd',
+        color: this.teamCss(state?.team, '#dddddd'),
       });
     }
     const myTeam = this.localPlayer?.team;
@@ -435,6 +435,7 @@ export class FlightMethods {
 
   /** Slow aerial pan over the airfield behind the login screen */
   updateIntroCamera() {
+    if (this.cine) { this.updateCine(); return; }
     const a = this.animationTime * 0.06;
     this.camera.position.set(Math.cos(a) * 150, 42 + Math.sin(a * 1.7) * 6, 30 + Math.sin(a) * 150);
     this.camera.lookAt(0, 4, 20);

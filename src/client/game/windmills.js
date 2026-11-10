@@ -118,16 +118,16 @@ export class WindmillMethods {
         mill.team = state.team;
         mill.progress = state.progress || 0;
 
-        if (state.team === 'red') {
-          mill.ringMat.color.setHex(0xFF3333);
+        // Blue is the village's, red is the raiders', whichever team you are on
+        const side = this.sideOf(state.team);
+        if (side) {
+          const hex = side === 'us' ? 0x3EA0FF : 0xFF3333;
+          mill.ringMat.color.setHex(hex);
           mill.ringMat.opacity = 0.6;
-          mill.beaconMat.color.setHex(0xFF3333);
-          mill.beaconMat.emissive.setHex(0xFF3333);
-        } else if (state.team === 'blue') {
-          mill.ringMat.color.setHex(0x3333FF);
-          mill.ringMat.opacity = 0.6;
-          mill.beaconMat.color.setHex(0x3333FF);
-          mill.beaconMat.emissive.setHex(0x3333FF);
+          mill.beaconMat.color.setHex(side === 'us' ? hex : 0xFF7A1A);
+          mill.beaconMat.emissive.setHex(side === 'us' ? hex : 0xFF7A1A);
+          // A looted mill's beacon gutters like the fire it is
+          if (side === 'them') mill.beacon.material.emissiveIntensity = 1.2 + Math.random() * 1.6;
         } else {
           mill.ringMat.color.setHex(0xffffff);
           mill.ringMat.opacity = 0.3;
@@ -164,9 +164,9 @@ export class WindmillMethods {
       this.millLoreSeen.add(nearestMill.config.id);
       const lore = {
         mill_n: ['North Mill', 'The oldest of the five. Its sails have not stopped since 1741.'],
-        mill_s: ['South Mill', 'Rebuilt after the great storm. The miller still blames Westerhaven.'],
-        mill_e: ['East Mill', 'Closest to the harbour. Westerhaven calls it theirs. Oostwijk disagrees, loudly.'],
-        mill_w: ['West Mill', 'Grinds the flour for the midsummer feast. Whoever holds it at the last light wins the year.'],
+        mill_s: ['South Mill', 'Rebuilt after the great storm, stone by stone, by the whole village.'],
+        mill_e: ['East Mill', 'Closest to the harbour, so the raiders always come for it first.'],
+        mill_w: ['West Mill', 'Grinds the flour for the midsummer feast. Lose it and there is no feast.'],
         mill_c: ['Hill Mill', 'On the only hill in the polder. You can see all four others from the cap.'],
       }[nearestMill.config.id];
       if (lore) this.lore('🌾', lore[0], lore[1]);
@@ -177,18 +177,17 @@ export class WindmillMethods {
         const st = this.windmillStates[nearestMill.config.id];
         const mine = st?.team === this.localPlayer?.team;
         const low = ship && ship.position.y < (this.rules.lowPassAltitude || 24);
+        const verb = st?.team ? 'Taking back' : 'Taking';
         captureLabel.textContent = mine
-          ? `Holding ${nearestMill.config.name} mill · stay inside to defend`
-          : `Capturing ${nearestMill.config.name} mill${low ? ' · LOW PASS ×2' : ' · fly low to capture faster'}`;
+          ? `${nearestMill.config.name} Mill is yours · stay close to defend it`
+          : `${verb} the ${nearestMill.config.name} Mill · stay inside the ring${low ? ' · LOW PASS ×2' : ' · fly low, it is faster'}`;
       }
       const serverState = this.windmillStates[nearestMill.config.id];
       const prog = serverState ? (serverState.progress || 0) : 0;
       if (captureFill) {
         captureFill.style.width = `${prog * 100}%`;
-        if (serverState && serverState.team) {
-          captureFill.style.backgroundColor = serverState.team === 'red' ? '#ff4444' : '#4444ff';
-        } else if (serverState && serverState.contestingTeam) {
-          captureFill.style.backgroundColor = serverState.contestingTeam === 'red' ? '#ff4444' : '#4444ff';
+        if (serverState && (serverState.team || serverState.contestingTeam)) {
+          captureFill.style.backgroundColor = this.teamCss(serverState.team || serverState.contestingTeam);
         } else {
           captureFill.style.backgroundColor = '#ffffff';
         }
@@ -199,6 +198,8 @@ export class WindmillMethods {
     }
 
     this.updateWindmillHUD();
+    this.updateMillFires(delta);
+    this.updateOrders();
   }
 
   updateWindmillHUD() {
@@ -207,7 +208,7 @@ export class WindmillMethods {
 
     // Only touch the page when ownership actually changes
     let key = '';
-    for (const config of CAPTURE_WINDMILLS) key += (this.windmillStates[config.id]?.team || '-')[0];
+    for (const config of CAPTURE_WINDMILLS) key += (this.sideOf(this.windmillStates[config.id]?.team) || '-')[0];
     if (key === this.millDotsKey) return;
     const first = this.millDotsKey === undefined;
     this.millDotsKey = key;
@@ -216,9 +217,9 @@ export class WindmillMethods {
       const state = this.windmillStates[config.id];
       let color = '#888';
       let symbol = '\u25CB';
-      if (state && state.team === 'red') { color = '#ff5555'; symbol = '\u25CF'; }
-      else if (state && state.team === 'blue') { color = '#77aaff'; symbol = '\u25CF'; }
-      html += `<span style="color:${color}; margin: 0 3px;" title="${config.name}">${symbol}</span>`;
+      const side = this.sideOf(state?.team);
+      if (side) { color = this.teamCss(state.team); symbol = side === 'them' ? '\uD83D\uDD25' : '\u25CF'; }
+      html += `<span style="color:${color}; margin: 0 3px;" title="${config.name} Mill">${symbol}</span>`;
     }
     el.innerHTML = html;
     // A mill changed hands: the dots light up for a few seconds

@@ -90,8 +90,9 @@ export class MarkerMethods {
       for (const mill of CAPTURE_WINDMILLS) {
         const st = this.windmillStates[mill.id];
         const dist = Math.hypot(mill.x - me.position.x, mill.z - me.position.z);
-        const owner = st?.team === myTeam ? 'YOURS' : st?.team ? 'ENEMY' : 'FREE';
+        const owner = st?.team === myTeam ? 'YOURS' : st?.team ? 'RAIDERS' : 'FREE';
         const cls = st?.team === 'red' ? 'mill-red' : st?.team === 'blue' ? 'mill-blue' : 'mill-none';
+        const burning = owner === 'RAIDERS';
         if (st?.team !== myTeam) {
           millRows.push({ id: `m:${mill.id}`, cls, dist: dist * 3, rel: relBearing(mill.x, mill.z),
             name: `${mill.name.toUpperCase()} MILL`, owner, target: this.waypointTargetId === mill.id });
@@ -103,7 +104,7 @@ export class MarkerMethods {
         const m = this.screenMarkerFor(tmp, EDGE_INSET);
         if (!m.inView) continue;
         list.push({ id: `m:${mill.id}`, x: m.x, y: m.y, angle: 0, inView: true, cls, dist,
-          label: `${mill.name.toUpperCase()} MILL · ${Math.round(dist * 3)} m`, owner });
+          label: `${mill.name.toUpperCase()} MILL${burning ? ' 🔥' : ''} · ${Math.round(dist * 3)} m`, owner });
       }
       millRows.sort((a, b) => (b.target ? 1 : 0) - (a.target ? 1 : 0) || a.dist - b.dist);
       rows.push(...millRows.slice(0, this.isTouch ? 3 : 4));

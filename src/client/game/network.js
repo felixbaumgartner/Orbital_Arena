@@ -132,6 +132,7 @@ export class NetworkMethods {
         this.round = data.gameState.round || 1;
         this.roundWins = data.gameState.roundWins || { red: 0, blue: 0 };
         this.suddenDeath = !!data.gameState.suddenDeath;
+        this.applySides();
         this.applyModeHud();
 
         // Pre-match countdown: the server's clock is still ahead of "now"
@@ -176,7 +177,7 @@ export class NetworkMethods {
           data.gameState.players.forEach(player => {
             if (player.id !== this.localPlayer.id && !this.players.has(player.id)) {
               const otherColor = this.getPlayerColor(player.id);
-              const otherShip = this.createPlayerShip(otherColor, player.plane, player.cosmetics);
+              const otherShip = this.createPlayerShip(otherColor, player.plane, player.cosmetics, this.sideOf(player.team) || 'them');
               otherShip.position.copy(player.position);
               if (!player.position.y) otherShip.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
               this.scene.add(otherShip);
@@ -203,7 +204,7 @@ export class NetworkMethods {
       socket.on('playerJoined', (player) => {
         if (player && player.id && !this.players.has(player.id)) {
           const playerColor = this.getPlayerColor(player.id);
-          const ship = this.createPlayerShip(playerColor, player.plane, player.cosmetics);
+          const ship = this.createPlayerShip(playerColor, player.plane, player.cosmetics, this.sideOf(player.team) || 'them');
           ship.position.copy(player.position);
           if (!player.position.y) ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
           this.scene.add(ship);
@@ -400,7 +401,7 @@ export class NetworkMethods {
         this.gameState = gameState;
         this.controlsEnabled = false;
         // The best moment of the match plays before the results
-        this.playOfTheMatch(() => this.showGameEnd());
+        this.playOfTheMatch(() => this.playEnding(() => this.showGameEnd()));
       });
       socket.on('error', (error) => console.error('Socket error:', error));
 
@@ -471,18 +472,23 @@ export class NetworkMethods {
 
       // Windmill capture updates from server
       socket.on('windmillUpdate', (data) => {
-        if (data && data.windmills) {
+        // The ending scene shows the mills as the match left them
+        if (data && data.windmills && !this.ending) {
           for (const mill of data.windmills) {
             const prev = this.windmillStates[mill.id];
             const myTeam = this.localPlayer?.team;
             if (prev && prev.team !== mill.team && mill.team) {
               this.playSound(mill.team === myTeam ? 'bell' : 'bell-low');
             }
-            if (prev && prev.team !== mill.team && mill.team === myTeam) {
-              const ship = this.players.get(this.localPlayer.id);
-              const inside = ship && Math.hypot(ship.position.x - mill.x, ship.position.z - mill.z) <= GAME_CONFIG.CAPTURE_RADIUS;
-              if (inside) { this.addPopup(150, 'CAPTURE'); this.announce('objective'); this.careerEvent('captures'); }
-              else this.addPopup(50, 'TEAM CAPTURE');
+            if (prev && prev.team !== mill.team && mill.team) {
+              const cfg = CAPTURE_WINDMILLS.find(m => m.id === mill.id);
+              const ship = this.localPlayer ? this.players.get(this.localPlayer.id) : null;
+              const inside = !!(ship && cfg) && Math.hypot(ship.position.x - cfg.x, ship.position.z - cfg.z) <= GAME_CONFIG.CAPTURE_RADIUS;
+              if (mill.team === myTeam) {
+                if (inside) { this.addPopup(150, 'CAPTURE'); this.announce('objective'); this.careerEvent('captures'); }
+                else this.addPopup(50, 'TEAM CAPTURE');
+              }
+              if (cfg && !this.matchOver) this.millChanged(mill, cfg.name, inside);
             }
             this.windmillStates[mill.id] = mill;
           }
@@ -522,7 +528,7 @@ export class NetworkMethods {
         this.updateHUD();
         this.applyModeHud();
         this.announce(this.suddenDeath ? 'suddenDeath' : d.round >= (d.maxRounds || 3) ? 'finalRound' : `round${d.round}`);
-        // One line from the Keeper sets up the round, once the countdown clears
+        // One line from the miller sets up the round, once the countdown clears
         this.scheduleStory();
       });
 
@@ -652,7 +658,7 @@ export class NetworkMethods {
   /** Builds a remote plane (and its contrail) from a server player record */
   addRemotePlane(player) {
     if (!player || !player.id || this.players.has(player.id)) return null;
-    const ship = this.createPlayerShip(this.getPlayerColor(player.id), player.plane, player.cosmetics);
+    const ship = this.createPlayerShip(this.getPlayerColor(player.id), player.plane, player.cosmetics, this.sideOf(player.team) || 'them');
     ship.position.copy(player.position);
     if (!player.position.y) ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
     this.scene.add(ship);

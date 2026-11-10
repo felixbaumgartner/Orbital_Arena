@@ -17,11 +17,17 @@ export class ShipMethods {
     return PLAYER_COLORS[Math.abs(hash) % PLAYER_COLORS.length];
   }
 
-  createPlayerShip(color, plane = 'scout', cosmetics = null) {
+  /**
+   * side: 'us' or 'them' as seen from this player's seat. Raiders always fly
+   * black with red trim, whatever paint their pilot chose, so a glance tells
+   * friend from foe; village planes keep their own (blue-family) colours.
+   */
+  createPlayerShip(color, plane = 'scout', cosmetics = null, side = 'us') {
     // Paint schemes replace the body colour; the accent glows on the fins
     const paint = cosmetics && PAINTS[cosmetics.paint];
     if (paint && paint.body !== null) { color = paint.body; }
-    const accent = paint && paint.accent !== null ? paint.accent : color;
+    let accent = paint && paint.accent !== null ? paint.accent : color;
+    if (side === 'them') { color = 0x24242a; accent = 0xff3b30; }
 
     const modelled = this.createModelledShip(color, accent, plane);
     if (modelled) return modelled;

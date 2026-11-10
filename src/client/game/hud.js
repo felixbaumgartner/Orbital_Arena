@@ -1,6 +1,6 @@
 // Barrel roll, radar, HUD readouts, scoreboard and end screen.
 // Methods are mixed into the Game class (see game.js); `this` is the Game.
-import { TEAMS } from '../ui/chatter.js';
+import { SIDES } from '../ui/chatter.js';
 import { GAME_CONFIG, CAPTURE_WINDMILLS } from '../config.js';
 
 export class HudMethods {
@@ -67,8 +67,7 @@ export class HudMethods {
       const state = this.windmillStates[mill.id];
       const p = project(mill.x, mill.z);
       if (!p.inRange) continue;
-      ctx.fillStyle = state?.team === 'red' ? '#ff5555'
-        : state?.team === 'blue' ? '#5599ff' : '#cccccc';
+      ctx.fillStyle = this.teamCss(state?.team);
       ctx.fillRect(p.x - 4, p.y - 4, 8, 8);
       ctx.fillStyle = '#000';
       ctx.font = 'bold 8px "Rajdhani", "Segoe UI", sans-serif';
@@ -77,7 +76,7 @@ export class HudMethods {
       ctx.fillText(mill.name[0], p.x, p.y + 0.5);
     }
 
-    // Other players (enemy red, teammate green)
+    // Other players (raiders red, wingmen blue)
     const myTeam = this.localPlayer?.team;
     const teamOf = {};
     if (this.gameState?.players) {
@@ -102,7 +101,7 @@ export class HudMethods {
         p.x = half + Math.cos(ang) * (half - 6);
         p.y = half + Math.sin(ang) * (half - 6);
       }
-      ctx.fillStyle = teamOf[id] === myTeam ? '#44ff88' : '#ff4444';
+      ctx.fillStyle = teamOf[id] === myTeam ? SIDES.us.css : '#ff4444';
       ctx.beginPath();
       ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
       ctx.fill();
@@ -185,9 +184,9 @@ export class HudMethods {
     const n = left > 0 ? Math.ceil(left / 1000) : 'GO!';
     if (n !== this.countdownLast) {
       this.countdownLast = n;
-      // The wait doubles as the introduction: which village you fly for
-      const side = this.localPlayer?.team ? `YOU FLY FOR ${TEAMS[this.localPlayer.team].short}` : 'MATCH STARTS IN';
-      this.instruments.setCountdown(n === 'GO!' ? 'FIGHT' : side, n);
+      // The wait doubles as the briefing: what you are about to do
+      const brief = this.mode === 'tdm' ? 'RAIDERS INCOMING · SHOOT THEM DOWN' : 'RAIDERS INCOMING · TAKE THE MILLS';
+      this.instruments.setCountdown(n === 'GO!' ? 'GO' : brief, n);
       // The announcer counts the last three down and calls the fight
       if (n === 'GO!') { this.announce('fight'); this.playSound('go'); }
       else if (n <= 3) this.announce(['one', 'two', 'three'][n - 1]);
@@ -238,13 +237,12 @@ export class HudMethods {
     if (!el || !team) return;
     // The countdown already says it; the banner is for pilots who join mid-round
     if (this.countdownEndsAt && this.countdownEndsAt > performance.now()) return;
-    const enemy = team === 'red' ? 'blue' : 'red';
     el.textContent = '';
-    el.appendChild(document.createTextNode(`YOU FLY FOR ${TEAMS[team].short}`));
+    el.appendChild(document.createTextNode('YOU FLY FOR THE VILLAGE'));
     const sub = document.createElement('small');
     sub.textContent = this.mode === 'tdm'
-      ? `${TEAMS[team].club} · Shoot down ${TEAMS[enemy].village}'s planes · first to ${this.rules.tdmTarget || 30}`
-      : `${TEAMS[team].club} · Hold the windmills · Shoot down ${TEAMS[enemy].village}'s planes`;
+      ? `Blue planes are friends · black and red are raiders · first to ${this.rules.tdmTarget || 30} shoot-downs`
+      : 'Blue planes are friends · black and red are raiders · take the windmills back';
     el.appendChild(sub);
     el.className = `show ${team}`;
     setTimeout(() => { el.className = ''; }, 4500);
@@ -320,16 +318,12 @@ export class HudMethods {
     const scores = this.gameState.scores || { red: 0, blue: 0 };
     const redEl = document.getElementById('score-red');
     const blueEl = document.getElementById('score-blue');
-    if (redEl) {
-      redEl.textContent = `${TEAMS.red.short} ${scores.red}`;
-      redEl.classList.toggle('mine', this.localPlayer.team === 'red');
-    }
-    if (blueEl) {
-      blueEl.textContent = `${scores.blue} ${TEAMS.blue.short}`;
-      blueEl.classList.toggle('mine', this.localPlayer.team === 'blue');
-    }
+    // Your side is always on the left, in blue; the raiders on the right, in red
+    const my = this.localPlayer.team, foe = this.foeTeam();
+    if (redEl) { redEl.textContent = `${SIDES.us.short} ${scores[my] || 0}`; redEl.className = 'score-pill us mine'; }
+    if (blueEl) { blueEl.textContent = `${scores[foe] || 0} ${SIDES.them.short}`; blueEl.className = 'score-pill them'; }
     const myTeamEl = document.getElementById('my-team');
-    if (myTeamEl) myTeamEl.textContent = this.localPlayer.team ? TEAMS[this.localPlayer.team].short : '';
+    if (myTeamEl) myTeamEl.textContent = SIDES.us.short;
 
     if (this.scoreboardOpen) this.renderScoreboard();
   }
@@ -339,6 +333,7 @@ export class HudMethods {
     const rows = this.gameState.players.map(p => ({
       name: p.username || 'Pilot',
       team: p.team || 'red',
+      side: this.sideOf(p.team) || 'them',
       kills: p.kills || 0,
       deaths: p.deaths || 0,
       isBot: !!p.isBot,
@@ -370,14 +365,15 @@ export class HudMethods {
         title.textContent = "IT'S A DRAW!";
         title.className = '';
       } else {
-        title.textContent = winner === myTeam ? 'VICTORY!' : 'DEFEAT';
+        title.textContent = winner === myTeam ? 'THE HARVEST IS SAFE' : 'THE HARVEST IS LOST';
         title.className = winner;
       }
     }
 
     const scoreEl = document.getElementById('end-score');
-    if (scoreEl) scoreEl.innerHTML =
-      `<span class="red">${TEAMS.red.short} ${scores.red}</span> &mdash; <span class="blue">${scores.blue} ${TEAMS.blue.short}</span> <span style="font-size:0.7em;color:#90a4ae">rounds</span>`;
+    const foe = this.foeTeam();
+    if (scoreEl && myTeam) scoreEl.innerHTML =
+      `<span class="${myTeam}">${SIDES.us.short} ${scores[myTeam]}</span> &mdash; <span class="${foe}">${scores[foe]} ${SIDES.them.short}</span> <span style="font-size:0.7em;color:#90a4ae">raids won</span>`;
 
     const statsEl = document.getElementById('end-stats');
     if (statsEl && this.localPlayer) {
@@ -387,8 +383,7 @@ export class HudMethods {
 
     const reasonEl = document.getElementById('end-reason');
     if (reasonEl) {
-      // The Keeper has the last word
-      reasonEl.textContent = `The Keeper: “${this.storyCloser(winner)}”`;
+      reasonEl.textContent = this.storyCloser(winner);
     }
     const mvpEl = document.getElementById('end-mvp');
     const mvp = this.gameState.mvp;

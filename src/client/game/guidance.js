@@ -1,7 +1,7 @@
 // Onboarding, waypoints, targeting, intermission and spawning.
 // Methods are mixed into the Game class (see game.js); `this` is the Game.
 import * as THREE from 'three';
-import { TEAMS, ACTS } from '../ui/chatter.js';
+import { SIDES, ACTS } from '../ui/chatter.js';
 import { GAME_CONFIG, CAPTURE_WINDMILLS } from '../config.js';
 
 export class GuidanceMethods {
@@ -19,7 +19,7 @@ export class GuidanceMethods {
     try { flights = parseInt(localStorage.getItem('dvf.flights') || '0', 10) || 0; localStorage.setItem('dvf.flights', String(flights + 1)); } catch (e) { /* ignore */ }
     if (flights < 3) this.instruments.cue('controls-hint', GAME_CONFIG.CONTROLS_PANEL_SECONDS);
     if (this.firstFlight && !this.onboarding) { this.startOnboarding(); return; }
-    // The opening seconds belong to the countdown and then the Keeper's one line
+    // The opening seconds belong to the countdown and then the miller's one line
     this.scheduleStory();
     if (!this.isTouch && this.instruments?.settings.mouse !== false && !this.pointerLocked) {
       const delay = Math.max(0, this.countdownEndsAt - performance.now()) + 9000;
@@ -38,8 +38,8 @@ export class GuidanceMethods {
           { label: 'Step 1 of 5 · Steer', html: 'Drag anywhere on the left half to steer', check: (g) => Math.abs(g.rotationVelocity) > 0.8, need: 0.8 },
           { label: 'Step 2 of 5 · Altitude', html: 'Push the stick up to climb, down to dive — fly OVER buildings', check: (g) => Math.abs(g.pitchAngle) > 0.18, need: 0.6 },
           { label: 'Step 3 of 5 · Boost', html: 'Hold BOOST for speed (it drains energy)', check: (g) => g.controls.boost && g.localPlayer.energy > 0, need: 0.5 },
-          { label: 'Step 4 of 5 · Guns', html: 'Hold FIRE with an enemy in the red box', check: (g) => g.animationTime - g.lastFireTime < 0.3, need: 0.2 },
-          { label: 'Step 5 of 5 · Objective', html: 'Follow the yellow marker and fly inside the windmill circle', check: (g) => g.nearAnyWindmill(), need: 1.2 },
+          { label: 'Step 4 of 5 · Guns', html: 'Hold FIRE with a raider in the red box', check: (g) => g.animationTime - g.lastFireTime < 0.3, need: 0.2 },
+          { label: 'Step 5 of 5 · Objective', html: 'Follow the marker and fly circles inside the windmill ring', check: (g) => g.nearAnyWindmill(), need: 1.2 },
         ],
       };
       this.showOnboardingStep();
@@ -63,7 +63,7 @@ export class GuidanceMethods {
           html: `Put the crosshair on the yellow lead circle, then ${key('Space')} or ${key('LMB')} — the box turns red when you're locked`,
           check: (g) => g.animationTime - g.lastFireTime < 0.3, need: 0.2 },
         { label: 'Step 5 of 5 · Objective',
-          html: 'Follow the yellow marker and circle the windmill to capture it',
+          html: 'Follow the marker to a windmill and fly circles inside its ring to take it',
           check: (g) => g.nearAnyWindmill(), need: 1.2 },
       ],
     };
@@ -85,7 +85,7 @@ export class GuidanceMethods {
       if (ob.doneTimer <= 0) {
         this.instruments.setHint(null);
         this.onboarding = null;
-        // Flight school is over: the Keeper sets the scene
+        // Flight school is over: the miller sets the scene
         this.storyBeat(this.beatForRound());
       }
       return;
@@ -98,7 +98,7 @@ export class GuidanceMethods {
       this.playSound('pickup');
       if (ob.index >= ob.steps.length) {
         ob.doneTimer = 2.5;
-        this.instruments.setHint('You can fly. Now go and win it.', 'Flight school complete');
+        this.instruments.setHint('You can fly. Blue planes are friends, black and red are raiders.', 'Flight school complete');
       } else {
         this.showOnboardingStep();
       }
@@ -177,11 +177,11 @@ export class GuidanceMethods {
       y = cy + Math.sin(ang) * t;
       angle = ang + Math.PI / 2;
     }
-    const color = best.state?.team === 'red' ? '#ff6b6b' : best.state?.team === 'blue' ? '#7fb2ff' : '#FFD23F';
+    const color = best.defend ? SIDES.us.css : best.state?.team ? SIDES.them.css : '#FFD23F';
     this.waypointTargetId = best.mill.id;
     this.instruments.updateWaypoint({
       visible: true, x, y, onScreen, angle,
-      label: `${best.defend ? 'DEFEND' : best.state?.team ? 'RETAKE' : 'CAPTURE'} · ${best.mill.name.toUpperCase()} MILL · ${Math.round(best.dist * 3)} m`,
+      label: `${best.defend ? 'DEFEND' : best.state?.team ? 'TAKE BACK' : 'TAKE'} · ${best.mill.name.toUpperCase()} MILL · ${Math.round(best.dist * 3)} m`,
       color,
     });
   }
@@ -319,26 +319,33 @@ export class GuidanceMethods {
     // Don't double up with the lock bracket when the enemy is already in view
     this.instruments.updateWaypoint({
       visible: !onScreen || bestDist > GAME_CONFIG.LOCK_RANGE, x, y, onScreen, angle,
-      label: `HUNT · ${best.name.toUpperCase()} · ${Math.round(bestDist * 3)} m`, color: '#ff6b6b',
+      label: `RAIDER · ${best.name.toUpperCase()} · ${Math.round(bestDist * 3)} m`, color: '#ff6b6b',
     });
   }
 
   showIntermission(d) {
     const el = document.getElementById('intermission');
     if (!el) return;
-    const winName = d.winner ? TEAMS[d.winner].short : null;
-    el.querySelector('.im-round').textContent = `${ACTS[d.round - 1] || 'Round ' + d.round} · complete`;
+    // Told from your seat: did the village stop this raid, and why
+    const my = this.localPlayer?.team || 'red', foe = this.foeTeam();
+    const won = d.winner === my, need = this.rules.roundsToWin || 2;
+    const tdm = this.mode === 'tdm';
+    el.querySelector('.im-round').textContent = `${ACTS[d.round - 1] || 'Raid ' + d.round} · over`;
     const title = el.querySelector('.im-title');
-    title.textContent = winName ? `${winName} WINS THE ROUND` : 'ROUND DRAWN';
+    title.textContent = !d.winner ? 'NOBODY WON THIS RAID' : won ? 'RAID BEATEN OFF' : 'THE RAIDERS GOT THROUGH';
     title.className = `im-title ${d.winner || ''}`;
-    el.querySelector('.im-score').textContent = `${d.scores.red} – ${d.scores.blue}`;
+    el.querySelector('.im-score').textContent = tdm
+      ? `Shoot-downs: you ${d.scores[my]} · raiders ${d.scores[foe]}`
+      : `Grain saved ${d.scores[my]} · stolen ${d.scores[foe]}`;
     const wins = el.querySelector('.im-wins');
     wins.textContent = '';
-    const r = document.createElement('span'); r.className = 'red'; r.textContent = TEAMS.red.short + ' ' + '●'.repeat(d.roundWins.red) + '○'.repeat(Math.max(0, (this.rules.roundsToWin || 2) - d.roundWins.red));
-    const b = document.createElement('span'); b.className = 'blue'; b.textContent = '○'.repeat(Math.max(0, (this.rules.roundsToWin || 2) - d.roundWins.blue)) + '●'.repeat(d.roundWins.blue) + ' ' + TEAMS.blue.short;
+    const r = document.createElement('span'); r.className = my; r.textContent = SIDES.us.short + ' ' + '●'.repeat(d.roundWins[my]) + '○'.repeat(Math.max(0, need - d.roundWins[my]));
+    const b = document.createElement('span'); b.className = foe; b.textContent = '○'.repeat(Math.max(0, need - d.roundWins[foe])) + '●'.repeat(d.roundWins[foe]) + ' ' + SIDES.them.short;
     wins.append(r, b);
-    el.querySelector('.im-mvp').textContent = d.mvp ? `Round MVP: ${d.mvp.username}${d.mvp.isBot ? ' (BOT)' : ''} · ${d.mvp.kills} kills` : '';
-    el.querySelector('.im-sudden').textContent = d.nextSuddenDeath ? 'Next: sudden death · windmills score double' : '';
+    el.querySelector('.im-mvp').textContent = d.mvp ? `Best pilot: ${d.mvp.username}${d.mvp.isBot ? ' (BOT)' : ''} · ${d.mvp.kills} shot down` : '';
+    el.querySelector('.im-sudden').textContent = d.nextSuddenDeath
+      ? 'Next: the final raid · every mill counts double'
+      : tdm ? `Win ${need} raids to win` : `Every mill you hold saves grain · win ${need} raids to save the harvest`;
     el.classList.add('show');
     this.intermissionEndsAt = performance.now() + (d.intermission || 15000);
     clearInterval(this.intermissionTicker);
@@ -346,7 +353,7 @@ export class GuidanceMethods {
       const left = Math.max(0, Math.ceil((this.intermissionEndsAt - performance.now()) / 1000));
       const next = el.querySelector('.im-next');
       next.textContent = '';
-      next.append('Next round in ');
+      next.append('Next raid in ');
       const bEl = document.createElement('b'); bEl.textContent = `${left}s`;
       next.append(bEl);
       if (left <= 0) clearInterval(this.intermissionTicker);
@@ -369,9 +376,9 @@ export class GuidanceMethods {
     if (dots) dots.style.display = tdm ? 'none' : '';
     for (const [, mill] of this.captureWindmills) mill.group.visible = !tdm;
     const target = this.rules.tdmTarget || 30;
-    const roundTag = `Round ${this.round} of ${this.rules.maxRounds || 3} · ${this.roundWins.red}–${this.roundWins.blue}${this.suddenDeath ? ' · sudden death' : ''}`;
-    const village = this.localPlayer?.team ? TEAMS[this.localPlayer.team].short : '';
-    this.instruments.setModeCaption(tdm ? `Team Deathmatch · first to ${target} · ${roundTag}` : `The Windmill Cup · ${roundTag}`, village);
+    const my = this.localPlayer?.team || 'red', foe = this.foeTeam();
+    const roundTag = `Raid ${this.round} of ${this.rules.maxRounds || 3} · ${this.roundWins[my]}–${this.roundWins[foe]}${this.suddenDeath ? ' · final raid' : ''}`;
+    this.instruments.setModeCaption(tdm ? `Dogfight · first to ${target} · ${roundTag}` : `Defend the Mills · ${roundTag}`, SIDES.us.short);
   }
 
   /** Spawn already flying, pointed at something worth doing */

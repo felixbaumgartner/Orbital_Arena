@@ -313,7 +313,7 @@ export class CameraMethods {
   finishCamera(dt) {
     const C = this.cam, cam = this.camera;
     const me = this.localPlayer ? this.players.get(this.localPlayer.id) : null;
-    const rig = this.replay ? 'replay' : !me ? 'intro' : this.dead ? 'death'
+    const rig = this.replay ? 'replay' : (!me || this.ending) ? 'intro' : this.dead ? 'death'
       : this.photoMode ? 'photo' : (this.cameraMode === 'cockpit' && !this.takeoffPhase) ? 'cockpit' : 'chase';
     const anchored = !!me && (rig === 'chase' || rig === 'cockpit' || rig === 'photo');
 

@@ -125,10 +125,10 @@ export const GAME_CONFIG = {
 };
 
 // Unique vibrant colors for each player
+// Village planes: blues, teals and cream. Red and black belong to the raiders.
 export const PLAYER_COLORS = [
-  0xFF3E3E, 0x3EA8FF, 0xFF9F1C, 0x2ECC71,
-  0x9B59B6, 0xF1C40F, 0x1ABC9C, 0xE91E9C,
-  0x00D4FF, 0xFF6B6B, 0x45B7D1, 0xFFA07A,
+  0x3EA8FF, 0x45B7D1, 0x1ABC9C, 0x00D4FF,
+  0x5B8DEF, 0x2E9BD6, 0x7FD1FF, 0xF2E6C8,
 ];
 
 // Cosmetic unlocks by pilot level (XP is banked per match)

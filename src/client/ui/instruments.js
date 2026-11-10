@@ -443,18 +443,22 @@ export class Instruments {
       }
     }
 
-    // Red box on every enemy plane in view (the locked one has its bracket)
+    // Red box on every raider in view (the locked one has its bracket), and
+    // a small blue chevron over every wingman, so nobody shoots a friend
     const boxed = new Set();
     for (const t of list) {
-      if (t.sameTeam || t.locked || !t.box) continue;
+      if ((!t.sameTeam && t.locked) || !t.box) continue;
+      if (t.sameTeam && !this.minimal) continue; // the full HUD names them instead
       boxed.add(t.id);
       let box = this.boxPool.get(t.id);
+      const cls = t.sameTeam ? 'friend-pip' : 'foe-box';
       if (!box) {
         box = document.createElement('div');
-        box.className = 'foe-box';
         this.tags.appendChild(box);
         this.boxPool.set(t.id, box);
       }
+      if (box.className !== cls) { box.className = cls; box.style.width = ''; box.style.height = ''; delete box.dataset.size; }
+      if (t.sameTeam) { box.style.translate = `${t.x.toFixed(1)}px ${t.y.toFixed(1)}px`; continue; }
       box.style.translate = `${t.box.x.toFixed(1)}px ${t.box.y.toFixed(1)}px`;
       const size = Math.round(t.box.size);
       if (box.dataset.size !== String(size)) {
@@ -545,7 +549,8 @@ export class Instruments {
     const body = document.getElementById('scoreboard-body');
     if (!body) return;
     body.textContent = '';
-    const sorted = rows.slice().sort((a, b) => (a.team > b.team ? 1 : a.team < b.team ? -1 : b.kills - a.kills));
+    // Your side first
+    const sorted = rows.slice().sort((a, b) => (a.side === b.side ? b.kills - a.kills : a.side === 'us' ? -1 : 1));
     for (const r of sorted) {
       const tr = document.createElement('tr');
       tr.className = `${r.team}${r.me ? ' me' : ''}`;
@@ -558,7 +563,7 @@ export class Instruments {
         name.appendChild(chip);
       }
       const team = document.createElement('td');
-      team.textContent = r.team === 'red' ? 'OOSTWIJK' : r.team === 'blue' ? 'WESTERHAVEN' : '';
+      team.textContent = r.side === 'us' ? 'VILLAGE' : 'RAIDERS';
       const k = document.createElement('td');
       k.className = 'num';
       k.textContent = r.kills;

@@ -217,7 +217,7 @@ class Game {
     this.streak = 0;
     this.radarSweepUntil = 0;
     this.calloutsDone = new Set();
-    this.storyDone = new Set();   // Keeper lines already said this match
+    this.storyDone = new Set();   // Radio lines already said this match
     this.curtainJobs = [];
     this.reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     this.xpBanked = false;
@@ -459,14 +459,36 @@ class Game {
         localStorage.setItem('dvf.mode', this.pendingMode);
         localStorage.setItem('dvf.plane', this.pendingPlane);
       } catch (e) { /* ignore */ }
-      this.connectToServer(username);
-      // Menu to cockpit behind a dip to black; it lifts when the plane is in the air
+      const join = () => {
+        this.connectToServer(username);
+        // Menu to cockpit behind a dip to black; it lifts when the plane is in the air
+        this.curtain(() => {
+          loginScreen.style.display = 'none';
+          hud.style.display = 'block';
+        }, true);
+      };
+      // The story first: all of it on a first visit, one short shot after
+      // that. "Fly Again" and the dogfight mode go straight to the air.
+      let seen = false;
+      try { seen = localStorage.getItem('dvf.storySeen') === '1'; } catch (e) { /* ignore */ }
+      if (this.autoStarted || this.pendingMode === 'tdm' || this.cine) { join(); return; }
+      try { localStorage.setItem('dvf.storySeen', '1'); } catch (e) { /* ignore */ }
       this.curtain(() => {
         loginScreen.style.display = 'none';
-        hud.style.display = 'block';
-      }, true);
+        this.playOpening(!seen, join);
+      });
     };
     startButton.addEventListener('click', start);
+    // The whole opening again, for anyone who skipped it
+    const replayStory = document.getElementById('replay-story');
+    if (replayStory) replayStory.addEventListener('click', () => {
+      if (this.cine) return;
+      this.initAudio();
+      this.curtain(() => {
+        loginScreen.style.display = 'none';
+        this.playOpening(true, () => { loginScreen.style.display = ''; });
+      });
+    });
     // Browsers only allow sound after a gesture: the first click or key on
     // the login screen starts the engine and the menu music
     const firstGesture = () => this.initAudio();
@@ -494,6 +516,7 @@ class Game {
       this.setupCareerPanel();
       if (localStorage.getItem('dvf.autoStart') === '1' && saved) {
         localStorage.removeItem('dvf.autoStart');
+        this.autoStarted = true;
         setTimeout(start, 50);
       }
     } catch (e) { /* ignore */ }
@@ -743,6 +766,7 @@ class Game {
 
     // Replays pose the planes and fly the camera (after the live update)
     this.updateReplay(realDelta);
+    if (this.ending && !this.replay) this.updateEnding();
     // The camera is final from here on: markers project against what is drawn
     this.finishCamera(realDelta);
     if (this.flewThisFrame && this.localPlayer) {

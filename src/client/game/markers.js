@@ -97,7 +97,8 @@ export class MarkerMethods {
             name: `${mill.name.toUpperCase()} MILL`, owner, target: this.waypointTargetId === mill.id });
         }
         if (this.waypointTargetId === mill.id) continue; // the big marker already covers it
-        if (this.instruments.minimal && dist > 600) continue; // clean HUD: only the mills close by get a label
+        // Clean HUD: only mills close by get a label, and not the one you are circling (its bar says it)
+        if (this.instruments.minimal && (dist > 600 || dist < GAME_CONFIG.CAPTURE_RADIUS)) continue;
         tmp.set(mill.x, 36, mill.z);
         const m = this.screenMarkerFor(tmp, EDGE_INSET);
         if (!m.inView) continue;
@@ -108,7 +109,7 @@ export class MarkerMethods {
       rows.push(...millRows.slice(0, this.isTouch ? 3 : 4));
     }
     this.instruments.updateEdgeMarkers(list);
-    this.instruments.updateNavPanel(rows);
+    if (!this.instruments.minimal) this.instruments.updateNavPanel(rows);
   }
 
   /**

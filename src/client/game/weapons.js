@@ -350,7 +350,9 @@ export class WeaponMethods {
       if (this.audio) this.audio.seeker.set('off');
       document.getElementById('btn-msl')?.classList.remove('ready');
     };
-    if (!can) { reset(); return; }
+    // Idle (no missiles, or not flying): clear once, then leave the page alone
+    if (!can) { if (!this.mslIdle) { this.mslIdle = true; reset(); } return; }
+    this.mslIdle = false;
     const cp = Math.cos(this.pitchAngle), sp = Math.sin(this.pitchAngle);
     _w.set(-Math.sin(this.shipRotation) * cp, sp, -Math.cos(this.shipRotation) * cp);
     const info = {};
@@ -391,8 +393,7 @@ export class WeaponMethods {
     const x = (_v.x * 0.5 + 0.5) * window.innerWidth, y = (-_v.y * 0.5 + 0.5) * window.innerHeight;
     this.instruments.cue('weapons-hud', 1.5); // ammo stays up while the seeker is working
     el.style.display = 'block';
-    el.style.left = `${x}px`;
-    el.style.top = `${y}px`;
+    el.style.translate = `${x.toFixed(1)}px ${y.toFixed(1)}px`;
     el.style.setProperty('--size', `${Math.round(96 - progress * 52)}px`);
     el.classList.toggle('locked', L.locked);
     const label = el.querySelector('.label');

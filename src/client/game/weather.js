@@ -142,7 +142,7 @@ export class WeatherMethods {
     }
 
     // Environment readout
-    if (this.instruments && this.sky) {
+    if (this.instruments && this.sky && !this.instruments.minimal) {
       const names = { clear: 'Clear', cloudy: 'Cloudy', foggy: 'Fog', rainy: 'Rain' };
       const night = this.sky.state.nightFactor > 0.5;
       const icons = { clear: night ? '🌙' : '☀️', cloudy: night ? '☁️' : '⛅', foggy: '🌫️', rainy: '🌧️' };

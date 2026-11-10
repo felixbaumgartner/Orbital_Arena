@@ -2,7 +2,19 @@
 
 A multiplayer flight-combat game over an endless, living Dutch landscape: tulip fields, canals, brick villages, windmills and wind farms. Capture windmills with your team and shoot down rival pilots (AI bots fill empty seats).
 
+## The story
+
+Two rival villages, Oostwijk and Westerhaven, fly for the Windmill Cup. Hold the most windmills when the bell rings at last light, and the Cup is yours.
+
+It is told by one voice. The lighthouse keeper who judges the Cup speaks once per round (the opening, the turning point, last light) and gives the verdict on the end screen.
+
 ## Features
+
+### Feel
+- A clean screen by default: score and time, health and boost, radar, crosshair and one objective marker. Ammo, windmill dots, chat and key hints appear only while they matter, then fade. "Full HUD" in settings brings back the compass, targets list, attitude dial and the rest
+- One message line under the score: a kill and its medals read as one line, and flavour text waits for a quiet moment
+- The chase camera trails the plane through turns and climbs but always looks down the gun line, so the centre of the screen is where the guns point
+- Views blend into each other (chase, cockpit, photo mode, kill cam); menus, results and overlays fade; a quick dip to black covers every respawn
 
 ### Combat
 - Real-time multiplayer dogfights (Socket.IO) with AI bots

@@ -24,9 +24,13 @@ export class HudMethods {
   // =========================================================================
 
   updateRadar(ship) {
-    const canvas = document.getElementById('radar');
+    const canvas = this.radarCanvas || (this.radarCanvas = document.getElementById('radar'));
     if (!canvas || !ship) return;
-    const ctx = canvas.getContext('2d');
+    // Thirty redraws a second is plenty for a radar
+    const nowMs = this.lastFrameMs || 0;
+    if (nowMs - (this.radarDrawnAt || 0) < 32) return;
+    this.radarDrawnAt = nowMs;
+    const ctx = this.radarCtx || (this.radarCtx = canvas.getContext('2d'));
     const size = canvas.width;
     const half = size / 2;
     const scale = half / GAME_CONFIG.RADAR_RANGE;
@@ -295,9 +299,11 @@ export class HudMethods {
   }
 
   updateEnergyBar(energyPercent) {
-    const energyFill = document.querySelector('.energy-fill');
+    const c = Math.round(Math.max(0, Math.min(100, energyPercent)));
+    if (c === this.energyShown) return;
+    this.energyShown = c;
+    const energyFill = this.energyFillEl || (this.energyFillEl = document.querySelector('.energy-fill'));
     if (!energyFill) return;
-    const c = Math.max(0, Math.min(100, energyPercent));
     energyFill.style.width = `${c}%`;
     energyFill.style.backgroundColor = c < 20 ? '#ff4444' : c < 50 ? '#ffaa00' : '#00aaff';
   }

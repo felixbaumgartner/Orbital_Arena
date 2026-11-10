@@ -78,8 +78,11 @@ export class FlightMethods {
     } else if (this.stalled && this.airspeed > GAME_CONFIG.STALL_RECOVER) {
       this.stalled = false;
     }
-    const stallEl = document.getElementById('stall');
-    if (stallEl) stallEl.classList.toggle('show', this.stalled);
+    if (this.stalled !== this.stallShown) {
+      this.stallShown = this.stalled;
+      const stallEl = document.getElementById('stall');
+      if (stallEl) stallEl.classList.toggle('show', this.stalled);
+    }
     if (this.stalled) {
       this.stallBeep -= delta;
       if (this.stallBeep <= 0) { this.stallBeep = 0.6; this.playSound('stall'); }
@@ -87,10 +90,17 @@ export class FlightMethods {
     let speed = this.airspeed;
 
     this.updateEnergyBar(this.localPlayer.energy);
-    this.updateSpeedBar(speed);
     this.updateEngineSound(speed);
-    const altEl = document.getElementById('alt-value');
-    if (altEl) altEl.textContent = `${Math.round(ship.position.y * 3)}m`;
+    // The speed and altitude readouts only exist in Full HUD
+    if (!this.instruments.minimal) {
+      this.updateSpeedBar(speed);
+      const alt = Math.round(ship.position.y * 3);
+      if (alt !== this.lastAltShown) {
+        this.lastAltShown = alt;
+        const altEl = document.getElementById('alt-value');
+        if (altEl) altEl.textContent = `${alt}m`;
+      }
+    }
 
     // Banked turning (A/D): turn rate eases toward the input
     const turnInput = Math.max(-1, Math.min(1, (this.controls.left ? 1 : 0) - (this.controls.right ? 1 : 0) + mouseTurn));
@@ -245,6 +255,20 @@ export class FlightMethods {
     const ins = this.instruments;
     if (!ins) return;
 
+    // Compass tape (Full HUD only; the clean HUD has the radar and one marker)
+    if (!ins.minimal) this.updateCompassTape(ship, ins);
+
+    // Vertical speed (metres per second in the HUD's 3x altitude scale)
+    if (this.prevAltitude === null) this.prevAltitude = ship.position.y;
+    const vs = delta > 0 ? (ship.position.y - this.prevAltitude) / delta * 3 : 0;
+    this.verticalSpeed = damp(this.verticalSpeed, vs, 6, delta);
+    this.prevAltitude = ship.position.y;
+    if (!ins.minimal && this.cameraMode !== 'cockpit') ins.updateAttitude(this.pitchAngle, ship.rotation.z, ship.position.y * 3, this.verticalSpeed);
+
+    this.updateFlightWarnings(ship, speed, delta, ins);
+  }
+
+  updateCompassTape(ship, ins) {
     // Heading (0 = north = -Z, clockwise)
     const headingDeg = ((-this.shipRotation * 180 / Math.PI) % 360 + 360) % 360;
     const markers = [];
@@ -273,14 +297,10 @@ export class FlightMethods {
       });
     }
     ins.updateCompass(headingDeg, markers);
+  }
 
-    // Vertical speed (metres per second in the HUD's 3x altitude scale)
-    if (this.prevAltitude === null) this.prevAltitude = ship.position.y;
-    const vs = delta > 0 ? (ship.position.y - this.prevAltitude) / delta * 3 : 0;
-    this.verticalSpeed = damp(this.verticalSpeed, vs, 6, delta);
-    this.prevAltitude = ship.position.y;
-    ins.updateAttitude(this.pitchAngle, ship.rotation.z, ship.position.y * 3, this.verticalSpeed);
-
+  /** Terrain warning, treeline chip, vignettes and discoveries */
+  updateFlightWarnings(ship, speed, delta, ins) {
     // Terrain / obstacle warning: project the flight path ~1.5s ahead
     let warn = false;
     if (!this.crashed && this.crashGrace <= 0) {
@@ -441,7 +461,14 @@ export class FlightMethods {
       this.renderer, this.animationTime);
     const sky = this.sky.state;
     // Refresh sky reflections now and then (sunset colours, overcast)
-    if (this.envProbe) this.envProbe.update(delta, this.hemiLight ? this.hemiLight.groundColor : undefined);
+    if (this.envProbe) {
+      const sd = sky.sunDir, oc = this.weatherNow.overcast || 0;
+      const k = this.envKey || (this.envKey = { x: 9, y: 9, z: 9, oc: -1 });
+      const changed = Math.abs(sd.x - k.x) + Math.abs(sd.y - k.y) + Math.abs(sd.z - k.z) > 0.012 || Math.abs(oc - k.oc) > 0.03;
+      if (this.envProbe.update(delta, this.hemiLight ? this.hemiLight.groundColor : undefined, false, changed)) {
+        k.x = sd.x; k.y = sd.y; k.z = sd.z; k.oc = oc;
+      }
+    }
     this.snapShadowFrustum();
 
     this.clouds.update(delta, center, this.wind, sky, this.weatherNow.cover);

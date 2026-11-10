@@ -385,7 +385,8 @@ class Game {
   }
 
   onSettingsChange(key, value, settings) {
-    this.applySettings(settings);
+    // Only graphics settings rebuild the renderer; a volume slider must not
+    if (key === 'quality' || key === 'bloom' || key === 'time') this.applySettings(settings);
     if (key.startsWith('vol') || key === 'music') this.applyAudioSettings(settings);
     if (key === 'quality') this.instruments.toast('⚙️', `Graphics: ${value}`, 'Applied');
   }
@@ -664,7 +665,7 @@ class Game {
         if (projectile.velocity) {
           const prev = this._prevProj || (this._prevProj = new THREE.Vector3());
           prev.copy(projectile.position);
-          projectile.position.add(projectile.velocity.clone().multiplyScalar(delta));
+          projectile.position.addScaledVector(projectile.velocity, delta);
           // My bullets hit whatever they visibly pass through
           if (id.startsWith(myPrefix) && this.registerLocalHit(id, projectile, prev, teamOf)) return;
           if (playerShip) {

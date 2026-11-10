@@ -287,8 +287,7 @@ export class Instruments {
       return;
     }
     el.style.display = 'block';
-    el.style.left = `${wp.x}px`;
-    el.style.top = `${wp.y}px`;
+    el.style.translate = `${wp.x.toFixed(1)}px ${wp.y.toFixed(1)}px`;
     el.style.color = wp.color;
     el.classList.toggle('offscreen', !wp.onScreen);
     const arrow = el.querySelector('.wp-arrow');
@@ -372,8 +371,7 @@ export class Instruments {
       return;
     }
     this.lock.style.display = 'block';
-    this.lock.style.left = `${info.x}px`;
-    this.lock.style.top = `${info.y}px`;
+    this.lock.style.translate = `${info.x.toFixed(1)}px ${info.y.toFixed(1)}px`;
     this.lock.classList.toggle('locked', !!info.locked);
     const box = this.lock.firstElementChild;
     box.style.width = `${info.size}px`;
@@ -385,8 +383,7 @@ export class Instruments {
 
     if (info.lead && info.lead.visible) {
       this.lead.style.display = 'block';
-      this.lead.style.left = `${info.lead.x}px`;
-      this.lead.style.top = `${info.lead.y}px`;
+      this.lead.style.translate = `${info.lead.x.toFixed(1)}px ${info.lead.y.toFixed(1)}px`;
       this.lead.classList.toggle('locked', !!info.locked);
     } else {
       this.lead.style.display = 'none';
@@ -411,7 +408,8 @@ export class Instruments {
   updateTags(list) {
     if (!this.tags) return;
     const seen = new Set();
-    for (const t of list) {
+    // Clean HUD: no name tags at all, only the enemy boxes below
+    for (const t of this.minimal ? [] : list) {
       seen.add(t.id);
       let el = this.tagPool.get(t.id);
       if (!el) {
@@ -431,8 +429,7 @@ export class Instruments {
         this.tagPool.set(t.id, el);
       }
       el.className = `tag ${t.team || ''}${t.sameTeam ? ' mine-team' : ''}`;
-      el.style.left = `${t.x}px`;
-      el.style.top = `${t.y}px`;
+      el.style.translate = `${t.x.toFixed(1)}px ${t.y.toFixed(1)}px`;
       const nameEl = el.firstChild;
       if (nameEl.textContent !== t.name) nameEl.textContent = t.name;
       el.children[1].style.display = t.isBot ? 'inline' : 'none';
@@ -458,10 +455,13 @@ export class Instruments {
         this.tags.appendChild(box);
         this.boxPool.set(t.id, box);
       }
-      box.style.left = `${t.box.x}px`;
-      box.style.top = `${t.box.y}px`;
-      box.style.width = `${t.box.size}px`;
-      box.style.height = `${t.box.size}px`;
+      box.style.translate = `${t.box.x.toFixed(1)}px ${t.box.y.toFixed(1)}px`;
+      const size = Math.round(t.box.size);
+      if (box.dataset.size !== String(size)) {
+        box.dataset.size = String(size);
+        box.style.width = `${size}px`;
+        box.style.height = `${size}px`;
+      }
     }
     for (const [id, el] of this.boxPool) {
       if (!boxed.has(id)) { el.remove(); this.boxPool.delete(id); }
@@ -524,8 +524,7 @@ export class Instruments {
         this.edgePool.set(m.id, el);
       }
       el.className = `edge-marker ${m.cls}${m.inView ? ' inview' : ''}`;
-      el.style.left = `${m.x}px`;
-      el.style.top = `${m.y}px`;
+      el.style.translate = `${m.x.toFixed(1)}px ${m.y.toFixed(1)}px`;
       el.children[0].style.transform = `rotate(${m.angle}rad)`;
       if (el.children[1].textContent !== m.label) el.children[1].textContent = m.label;
       const owner = m.owner || '';
@@ -603,9 +602,11 @@ export class Instruments {
   }
 
   setVignettes({ boost = 0, damage = 0 } = {}) {
-    if (this.boostVignette) this.boostVignette.style.opacity = boost.toFixed(2);
-    if (this.damageVignette) {
-      this.damageVignette.style.opacity = damage.toFixed(2);
+    const b = boost.toFixed(2), d = damage.toFixed(2);
+    if (this.boostVignette && b !== this.boostShown) { this.boostShown = b; this.boostVignette.style.opacity = b; }
+    if (this.damageVignette && d !== this.damageShown) {
+      this.damageShown = d;
+      this.damageVignette.style.opacity = d;
       this.damageVignette.classList.toggle('pulse', damage > 0.01);
     }
   }

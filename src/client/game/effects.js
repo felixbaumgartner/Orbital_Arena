@@ -23,7 +23,7 @@ export class EffectsMethods {
 
     const line = new THREE.Line(geo, mat);
     this.scene.add(line);
-    this.trails.set(playerId, { line, points: [], maxPoints });
+    this.trails.set(playerId, { line, points: [], maxPoints, sampledAt: -1 });
   }
 
   updateTrail(playerId, position) {
@@ -32,19 +32,32 @@ export class EffectsMethods {
 
     // A respawn or teleport would draw a laser-straight line across the sky;
     // start a fresh trail instead
-    const last = trail.points[trail.points.length - 1];
-    if (last && last.distanceToSquared(position) > 40 * 40) trail.points.length = 0;
-    trail.points.push(position.clone());
-    if (trail.points.length > trail.maxPoints) trail.points.shift();
-
-    const arr = trail.line.geometry.attributes.position.array;
-    for (let i = 0; i < trail.points.length; i++) {
-      arr[i * 3] = trail.points[i].x;
-      arr[i * 3 + 1] = trail.points[i].y;
-      arr[i * 3 + 2] = trail.points[i].z;
+    const pts = trail.points;
+    const last = pts[pts.length - 1];
+    if (last && last.distanceToSquared(position) > 40 * 40) pts.length = 0;
+    const attr = trail.line.geometry.attributes.position;
+    const arr = attr.array;
+    // A new point 45 times a second, whatever the frame rate, so the trail
+    // is the same length for everyone; in between, its head rides the plane
+    const now = this.animationTime;
+    if (pts.length >= 2 && now - trail.sampledAt < 1 / 45) {
+      const head = pts[pts.length - 1].copy(position);
+      const i = (pts.length - 1) * 3;
+      arr[i] = head.x; arr[i + 1] = head.y; arr[i + 2] = head.z;
+      attr.needsUpdate = true;
+      return;
     }
-    trail.line.geometry.attributes.position.needsUpdate = true;
-    trail.line.geometry.setDrawRange(0, trail.points.length);
+    trail.sampledAt = now;
+    // The oldest point is reused as the newest: no garbage per frame
+    const p = pts.length >= trail.maxPoints ? pts.shift() : new THREE.Vector3();
+    pts.push(p.copy(position));
+    for (let i = 0; i < pts.length; i++) {
+      arr[i * 3] = pts[i].x;
+      arr[i * 3 + 1] = pts[i].y;
+      arr[i * 3 + 2] = pts[i].z;
+    }
+    attr.needsUpdate = true;
+    trail.line.geometry.setDrawRange(0, pts.length);
   }
 
   removeTrail(playerId) {

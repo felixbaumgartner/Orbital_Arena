@@ -55,10 +55,14 @@ export class EnvProbe {
   }
 
   /** groundColor: the hemisphere light's ground colour, for the lower half */
-  update(delta: number, groundColor?: THREE.Color, force = false): void {
-    if (!this.enabled) return;
+  /**
+   * changed: whether the sky looks different from the last capture. An
+   * unchanged sky is never re-rendered. Returns true when it captured.
+   */
+  update(delta: number, groundColor?: THREE.Color, force = false, changed = true): boolean {
+    if (!this.enabled) return false;
     this.timer += delta;
-    if (!force && this.target && this.timer < this.interval) return;
+    if (!force && this.target && (this.timer < this.interval || !changed)) return false;
     this.timer = 0;
     if (groundColor) (this.ground.material as THREE.MeshBasicMaterial).color.copy(groundColor);
     const prev = this.target;
@@ -74,5 +78,6 @@ export class EnvProbe {
       if (first) m.needsUpdate = true;
     }
     if (prev) prev.dispose();
+    return true;
   }
 }

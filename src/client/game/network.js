@@ -195,6 +195,9 @@ export class NetworkMethods {
 
         this.updateHUD();
         this.updateEnergyBar(this.localPlayer.energy || 100);
+        // Build every shader now, behind the dip to black and the countdown,
+        // rather than on the first explosion
+        try { this.renderer.compile(this.scene, this.camera); } catch (e) { /* warm-up is best effort */ }
       });
 
       socket.on('playerJoined', (player) => {

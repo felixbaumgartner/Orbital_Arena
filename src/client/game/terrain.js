@@ -158,38 +158,47 @@ export class TerrainMethods {
     const cx = Math.floor(playerX / GAME_CONFIG.CHUNK_SIZE);
     const cz = Math.floor(playerZ / GAME_CONFIG.CHUNK_SIZE);
 
-    // LOD: full detail within 2 chunks, cheap far-ring silhouettes beyond
-    const needed = new Map();
-    for (let dx = -this.viewDistance; dx <= this.viewDistance; dx++) {
-      for (let dz = -this.viewDistance; dz <= this.viewDistance; dz++) {
-        const ring = Math.max(Math.abs(dx), Math.abs(dz));
-        needed.set(`${cx + dx},${cz + dz}`, ring <= 2 ? 'high' : 'low');
+    // Nothing to do until the plane crosses into another chunk (or the view
+    // distance changes): the list of work below is worked off a chunk a frame
+    const q = this.chunkQueue || (this.chunkQueue = { cx: NaN, cz: NaN, view: -1, pending: [] });
+    if (q.cx !== cx || q.cz !== cz || q.view !== this.viewDistance) {
+      q.cx = cx; q.cz = cz; q.view = this.viewDistance;
+
+      // LOD: full detail within 2 chunks, cheap far-ring silhouettes beyond
+      const needed = new Map();
+      for (let dx = -this.viewDistance; dx <= this.viewDistance; dx++) {
+        for (let dz = -this.viewDistance; dz <= this.viewDistance; dz++) {
+          const ring = Math.max(Math.abs(dx), Math.abs(dz));
+          needed.set(`${cx + dx},${cz + dz}`, { x: cx + dx, z: cz + dz, ring, lod: ring <= 2 ? 'high' : 'low' });
+        }
       }
-    }
 
-    for (const key of this.chunks.keys()) {
-      if (!needed.has(key)) this.disposeChunk(key);
-    }
+      for (const key of this.chunks.keys()) {
+        if (!needed.has(key)) this.disposeChunk(key);
+      }
 
-    // Build missing chunks nearest-first, a couple per frame, so crossing a
-    // chunk boundary never stalls the frame. The very first fill (and any
-    // teleport that empties the map) builds everything at once.
-    const pending = [];
-    for (const [key, lod] of needed) {
-      const current = this.chunkLods.get(key);
-      const [x, z] = key.split(',').map(Number);
-      const ring = Math.max(Math.abs(x - cx), Math.abs(z - cz));
-      if (!this.chunks.has(key)) pending.push({ x, z, lod, ring, upgrade: false });
-      else if (current === 'low' && lod === 'high') pending.push({ x, z, lod, ring, upgrade: true });
-      // Downgrades (high chunk drifting into the far ring) are left as-is;
-      // they get evicted once out of range.
+      // Missing chunks, nearest first. Downgrades (a high chunk drifting
+      // into the far ring) are left as-is; they get evicted once out of range.
+      q.pending.length = 0;
+      for (const [key, n] of needed) {
+        if (!this.chunks.has(key)) q.pending.push({ key, x: n.x, z: n.z, lod: n.lod, ring: n.ring, upgrade: false });
+        else if (this.chunkLods.get(key) === 'low' && n.lod === 'high') q.pending.push({ key, x: n.x, z: n.z, lod: n.lod, ring: n.ring, upgrade: true });
+      }
+      q.pending.sort((a, b) => a.ring - b.ring);
     }
-    pending.sort((a, b) => a.ring - b.ring);
-    const budget = this.chunks.size === 0 ? Infinity : 2;
+    if (!q.pending.length) return;
+
+    // One chunk a frame, so crossing a boundary never stalls the frame; the
+    // ones right around the plane may take a second if there is time left.
+    // The very first fill (and any teleport that empties the map) builds
+    // everything at once.
+    const all = this.chunks.size === 0;
+    const started = performance.now();
     let built = 0;
-    for (const p of pending) {
-      if (built >= budget) break;
-      if (p.upgrade) this.disposeChunk(`${p.x},${p.z}`);
+    while (q.pending.length) {
+      if (!all && built >= 1 && (built >= 2 || q.pending[0].ring > 1 || performance.now() - started > 4)) break;
+      const p = q.pending.shift();
+      if (p.upgrade) this.disposeChunk(p.key);
       this.generateChunk(p.x, p.z, p.lod);
       built++;
     }
@@ -322,7 +331,7 @@ export class TerrainMethods {
 
         // Windmill tucked in the corner away from the street
         if (rnd(999) > 0.55) {
-          this.addWindmill(baseX + 18 + rnd(998) * 25, baseZ + 18 + rnd(997) * 25, objects, colliders);
+          this.addWindmill(baseX + 18 + rnd(998) * 25, baseZ + 18 + rnd(997) * 25, objects, colliders, chunkKey);
         }
 
         // Church with steeple (rare)
@@ -507,7 +516,7 @@ export class TerrainMethods {
       }
 
       if (high && rnd(799) > 0.6) {
-        this.addWindmill(baseX + 20 + rnd(800) * (CS - 40), baseZ + 20 + rnd(801) * (CS - 40), objects, colliders);
+        this.addWindmill(baseX + 20 + rnd(800) * (CS - 40), baseZ + 20 + rnd(801) * (CS - 40), objects, colliders, chunkKey);
       }
       if (!coastal && !canalColumn && rnd(881) > 0.8) this.addTurbineRow(batch, baseX, baseZ, seed + 891, chunkKey, objects, colliders);
     }
@@ -1049,7 +1058,7 @@ export class TerrainMethods {
     }
   }
 
-  addWindmill(wx, wz, objects, colliders) {
+  addWindmill(wx, wz, objects, colliders, chunkKey = 'static') {
     if (this.models.windmill) {
       const model = this.cloneModel('windmill');
       model.position.set(wx, 0, wz);
@@ -1058,7 +1067,7 @@ export class TerrainMethods {
       model.traverse((c) => { if (c.name === 'Sails') sails = c; });
       this.scene.add(model);
       objects.push(model);
-      if (sails) this.registerAmbient('static', { mesh: sails, type: 'sails' });
+      if (sails) this.registerAmbient(chunkKey, { mesh: sails, type: 'sails' });
       colliders.push({ x: wx, z: wz, radius: 7, topY: 36 });
       return;
     }

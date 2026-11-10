@@ -2,7 +2,7 @@
 // warning, toasts, environment readout, settings panel, photo mode.
 
 const DEFAULT_SETTINGS = {
-  quality: 'high', bloom: true, fps: false, time: 'auto', mouse: true, simpleHud: false, assist: true,
+  quality: 'high', bloom: true, fps: false, time: 'auto', mouse: true, hud: 'minimal', assist: true,
   volMaster: 0.8, volSfx: 0.9, volMusic: 0.6, volVoice: 0.9, music: true, killcam: true,
 };
 const STORAGE_KEY = 'dvf.settings.v1';
@@ -14,6 +14,14 @@ export class Instruments {
     this.settingsOpen = false;
     this.photoMode = false;
     this.toastQueue = [];
+    // One message line (minimal HUD) and the "show while relevant" timers
+    this.noticeEl = document.getElementById('notice');
+    this.noticeNow = null;
+    this.noticeQueue = [];
+    this.noticeGapUntil = 0;
+    this.cues = new Map();
+    this.cueEls = {};
+    this.minimal = this.settings.hud !== 'full';
     this.fpsFrames = 0;
     this.fpsTime = 0;
 
@@ -46,7 +54,7 @@ export class Instruments {
 
     this.bindSettingsPanel();
     this.applyFpsVisibility();
-    this.applySimpleHud();
+    this.applyHudMode();
   }
 
   // --- Settings ---------------------------------------------------------------
@@ -54,10 +62,16 @@ export class Instruments {
   loadSettings() {
     // Phones and tablets start on Low; the player can raise it in settings
     const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-    const base = coarse ? { ...DEFAULT_SETTINGS, quality: 'low', simpleHud: true } : { ...DEFAULT_SETTINGS };
+    const base = coarse ? { ...DEFAULT_SETTINGS, quality: 'low' } : { ...DEFAULT_SETTINGS };
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return { ...base, ...JSON.parse(raw) };
+      if (raw) {
+        const saved = JSON.parse(raw);
+        // "Simple HUD" is gone: the clean layout is now the default for everyone
+        delete saved.simpleHud;
+        if (saved.hud !== 'full') saved.hud = 'minimal';
+        return { ...base, ...saved };
+      }
     } catch (e) { /* private mode etc. */ }
     return base;
   }
@@ -74,7 +88,7 @@ export class Instruments {
     const fps = document.getElementById('set-fps');
     const time = document.getElementById('set-time');
     const mouse = document.getElementById('set-mouse');
-    const simple = document.getElementById('set-simple');
+    const fullHud = document.getElementById('set-fullhud');
     const assist = document.getElementById('set-assist');
     const close = document.getElementById('settings-close');
 
@@ -83,18 +97,18 @@ export class Instruments {
     if (fps) fps.checked = this.settings.fps;
     if (time) time.value = this.settings.time;
     if (mouse) mouse.checked = this.settings.mouse !== false;
-    if (simple) simple.checked = !!this.settings.simpleHud;
+    if (fullHud) fullHud.checked = this.settings.hud === 'full';
     if (assist) assist.checked = this.settings.assist !== false;
 
     const change = (key, value) => {
       this.settings[key] = value;
       this.saveSettings();
       this.applyFpsVisibility();
-      this.applySimpleHud();
+      this.applyHudMode();
       this.onSettingsChange(key, value, this.settings);
     };
     if (mouse) mouse.addEventListener('change', () => change('mouse', mouse.checked));
-    if (simple) simple.addEventListener('change', () => change('simpleHud', simple.checked));
+    if (fullHud) fullHud.addEventListener('change', () => change('hud', fullHud.checked ? 'full' : 'minimal'));
     if (assist) assist.addEventListener('change', () => change('assist', assist.checked));
     if (quality) quality.addEventListener('change', () => change('quality', quality.value));
     if (bloom) bloom.addEventListener('change', () => change('bloom', bloom.checked));
@@ -121,7 +135,7 @@ export class Instruments {
     const panel = document.getElementById('settings-panel');
     if (!panel) return;
     this.settingsOpen = force === undefined ? !this.settingsOpen : force;
-    panel.style.display = this.settingsOpen ? 'block' : 'none';
+    panel.classList.toggle('on', this.settingsOpen);
     if (this.settingsOpen) {
       const first = panel.querySelector('select, input, button');
       if (first) first.focus();
@@ -134,8 +148,110 @@ export class Instruments {
     if (this.fpsEl) this.fpsEl.style.display = this.settings.fps ? 'block' : 'none';
   }
 
-  applySimpleHud() {
-    document.body.classList.toggle('simple', !!this.settings.simpleHud);
+  applyHudMode() {
+    this.minimal = this.settings.hud !== 'full';
+    document.body.classList.toggle('hud-min', this.minimal);
+    document.body.classList.toggle('hud-full', !this.minimal);
+    if (!this.minimal) {
+      // Anything on the single message line goes; Full HUD has its own places
+      this.noticeNow = null;
+      this.noticeQueue.length = 0;
+      if (this.noticeEl) this.noticeEl.classList.remove('on');
+    }
+  }
+
+  // --- Minimal HUD: one message line, and elements that show only while relevant ---
+
+  /**
+   * Shows a normally-hidden HUD element for a while (seconds), until told
+   * otherwise (true), or hides it again (false). No-op in Full HUD, where
+   * everything is always on.
+   */
+  cue(id, seconds = 4) {
+    const el = this.cueEls[id] || (this.cueEls[id] = document.getElementById(id));
+    if (!el) return;
+    if (seconds === false) { this.cues.delete(id); el.classList.remove('cue'); return; }
+    const until = seconds === true ? Infinity : performance.now() + seconds * 1000;
+    const cur = this.cues.get(id);
+    if (cur === undefined) el.classList.add('cue');
+    if (cur === undefined || until > cur) this.cues.set(id, until);
+  }
+
+  /** True while the message line is showing or has something waiting */
+  busy() {
+    return !!this.noticeNow || this.noticeQueue.length > 0;
+  }
+
+  /**
+   * The one place messages appear. { key, pri, icon, who, title, sub, ttl,
+   * story, mergeInto }. Higher pri interrupts; equal or lower waits its
+   * turn (two at most); pri 0 is flavour and only shows on a quiet line.
+   * mergeInto folds this message into the one on screen with that key,
+   * so a kill and its medals read as one line.
+   */
+  notify(n) {
+    if (!this.minimal || !this.noticeEl) {
+      this.toastFull(n.icon || '', n.who ? `${n.who}: ${n.title}` : n.title, n.sub || '');
+      return;
+    }
+    const now = performance.now();
+    const item = {
+      key: n.key || n.title, pri: n.pri === undefined ? 1 : n.pri, icon: n.icon || '', who: n.who || '',
+      title: n.title, sub: n.sub || '', ttl: n.ttl || 3400, story: !!n.story,
+    };
+    const cur = this.noticeNow;
+    if (cur && n.mergeInto && cur.key === n.mergeInto && now - cur.at < 1200) {
+      cur.sub = [cur.sub, item.title].filter(Boolean).join(' · ');
+      cur.until = Math.max(cur.until, now + 2600);
+      this.renderNotice(cur);
+      return;
+    }
+    if (!cur || cur.key === item.key || item.pri > cur.pri) {
+      if (item.pri === 0 && (cur || this.noticeQueue.length)) return;
+      this.showNotice(item, now);
+      return;
+    }
+    if (item.pri === 0) return;
+    this.noticeQueue.push(item);
+    this.noticeQueue.sort((a, b) => b.pri - a.pri);
+    if (this.noticeQueue.length > 2) this.noticeQueue.length = 2;
+  }
+
+  showNotice(item, now) {
+    item.at = now;
+    item.until = now + item.ttl;
+    this.noticeNow = item;
+    this.renderNotice(item);
+    this.noticeEl.classList.add('on');
+  }
+
+  renderNotice(item) {
+    const el = this.noticeEl;
+    el.classList.toggle('story', item.story);
+    el.children[0].textContent = item.icon;
+    el.children[1].textContent = item.who;
+    el.children[2].textContent = item.title;
+    el.children[3].textContent = item.sub;
+  }
+
+  /** Once a frame: expire the message line and the cued elements */
+  tick(now) {
+    const cur = this.noticeNow;
+    if (cur && now >= cur.until) {
+      this.noticeNow = null;
+      this.noticeEl.classList.remove('on');
+      this.noticeGapUntil = now + 380;
+    }
+    if (!this.noticeNow && this.noticeQueue.length && now >= this.noticeGapUntil) {
+      this.showNotice(this.noticeQueue.shift(), now);
+    }
+    if (this.cues.size) {
+      for (const [id, until] of this.cues) {
+        if (until > now) continue;
+        this.cues.delete(id);
+        this.cueEls[id].classList.remove('cue');
+      }
+    }
   }
 
   // --- Coaching hint --------------------------------------------------------------
@@ -185,7 +301,7 @@ export class Instruments {
 
   /** "+100 KILL" floating beside the crosshair */
   popup(points, label) {
-    if (!this.popups) return;
+    if (!this.popups || this.minimal) return;
     const el = document.createElement('div');
     el.className = 'popup';
     el.textContent = `+${points}`;
@@ -201,6 +317,11 @@ export class Instruments {
   }
 
   medal(icon, title, sub = '') {
+    if (this.minimal) {
+      // Earned on a kill: it joins the kill's line. Otherwise it gets its own.
+      this.notify({ key: `medal:${title}`, pri: 3, icon, title, sub, mergeInto: 'kill' });
+      return;
+    }
     const el = this.medalEl;
     if (!el) return;
     el.querySelector('.medal-icon').textContent = icon;
@@ -420,7 +541,7 @@ export class Instruments {
   /** rows: [{ name, team, kills, deaths, isBot, me }] */
   setScoreboard(visible, rows = []) {
     if (!this.scoreboard) return;
-    this.scoreboard.style.display = visible ? 'block' : 'none';
+    this.scoreboard.classList.toggle('on', visible);
     if (!visible) return;
     const body = document.getElementById('scoreboard-body');
     if (!body) return;
@@ -483,7 +604,10 @@ export class Instruments {
 
   setVignettes({ boost = 0, damage = 0 } = {}) {
     if (this.boostVignette) this.boostVignette.style.opacity = boost.toFixed(2);
-    if (this.damageVignette) this.damageVignette.style.opacity = damage.toFixed(2);
+    if (this.damageVignette) {
+      this.damageVignette.style.opacity = damage.toFixed(2);
+      this.damageVignette.classList.toggle('pulse', damage > 0.01);
+    }
   }
 
   /**
@@ -656,7 +780,13 @@ export class Instruments {
 
   // --- Toasts ----------------------------------------------------------------------
 
-  toast(icon, title, subtitle = '') {
+  /** A short message. Minimal HUD: the single line. Full HUD: the stacked toasts. */
+  toast(icon, title, subtitle = '', pri = 1) {
+    if (this.minimal) this.notify({ icon, title, sub: subtitle, pri });
+    else this.toastFull(icon, title, subtitle);
+  }
+
+  toastFull(icon, title, subtitle = '') {
     if (!this.toasts) return;
     const el = document.createElement('div');
     el.className = 'toast';

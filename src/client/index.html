@@ -830,7 +830,6 @@
         body.touch .nav-row { font-size: 0.7rem; }
 
         body.photo #notify-column > :not(#toasts) { display: none !important; }
-        body.simple #notify-column #kill-feed { display: none !important; }
 
         /* ---------- Touch controls ---------- */
         #touch-ui { display: none; }
@@ -1020,19 +1019,7 @@
         }
 
         body.photo::before,
-        body.photo::after {
-            content: '';
-            position: fixed;
-            left: 0;
-            width: 100%;
-            height: 9vh;
-            background: #000;
-            z-index: 1150;
-            pointer-events: none;
-        }
-
-        body.photo::before { top: 0; }
-        body.photo::after { bottom: 0; }
+        body.photo::after { height: 9vh; }
 
         /* Cockpit view: the dashboard dials replace the attitude panel */
         body.cockpit #attitude-cluster { display: none; }
@@ -1040,11 +1027,6 @@
         /* Replays: kill cam, final kill, play of the match */
         body.replaying #hud, body.replaying #chat, body.replaying #crash-overlay,
         body.replaying #notify-column > :not(#toasts), body.replaying #touch-ui { visibility: hidden !important; }
-        body.replaying::before, body.replaying::after {
-            content: ''; position: fixed; left: 0; width: 100%; height: 11vh; background: #000; z-index: 1150; pointer-events: none;
-        }
-        body.replaying::before { top: 0; }
-        body.replaying::after { bottom: 0; }
         #replay-overlay { position: fixed; inset: 0; z-index: 1160; pointer-events: none; display: none; }
         #replay-overlay.show { display: block; }
         #replay-overlay .rp-tag {
@@ -1847,12 +1829,6 @@
         #chat.collapsed .chat-message { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); }
         #chat.collapsed .chat-message:not(:nth-last-child(-n+3)) { display: none; }
 
-        /* Simple HUD: only what you need to fly and fight */
-        body.simple #attitude-cluster,
-        body.simple #weather-indicator,
-        body.simple #controls-panel,
-        body.simple #kill-feed,
-        body.simple #controls-hint { display: none !important; }
 
         #score-bar .score-pill {
             padding: 0.2rem 0.9rem;
@@ -2039,6 +2015,152 @@
         }
 
         #end-restart:hover { background: #45a049; }
+
+        /* =====================================================================
+           Clean HUD, one message line, and fades between moments
+           ===================================================================== */
+
+        /* In flight nothing needs a live blur behind it (costly on laptops) */
+        #hud .glass, #notify-column .glass, #chat {
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+        }
+        #hud .glass, #notify-column .glass { background: rgba(10, 16, 22, 0.68); }
+
+        /* The low-health pulse only runs while the vignette is showing */
+        #damage-vignette { animation: none; }
+        #damage-vignette.pulse { animation: damagePulse 1.1s ease-in-out infinite alternate; }
+
+        /* ---- Fades instead of pops ---- */
+        #intermission {
+            display: block; opacity: 0; visibility: hidden; transform: translate(-50%, -46%);
+            transition: opacity 0.35s ease, transform 0.35s ease, visibility 0s 0.35s;
+        }
+        #intermission.show { opacity: 1; visibility: visible; transform: translate(-50%, -50%); transition-delay: 0s; }
+
+        #end-screen { display: flex; opacity: 0; visibility: hidden; transition: opacity 0.5s ease, visibility 0s 0.5s; }
+        #end-screen.on { opacity: 1; visibility: visible; transition-delay: 0s; }
+        #end-screen #end-card { transform: translateY(16px); transition: transform 0.5s ease; }
+        #end-screen.on #end-card { transform: none; }
+
+        #crash-overlay, #takeoff-overlay {
+            display: flex; opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0s 0.3s;
+        }
+        #crash-overlay.on, #takeoff-overlay.on { opacity: 1; visibility: visible; transition-delay: 0s; }
+
+        #settings-panel { display: block; opacity: 0; visibility: hidden; transition: opacity 0.2s ease, visibility 0s 0.2s; }
+        #settings-panel.on { opacity: 1; visibility: visible; transition-delay: 0s; }
+
+        #scoreboard { display: block; opacity: 0; visibility: hidden; transition: opacity 0.15s ease, visibility 0s 0.15s; }
+        #scoreboard.on { opacity: 1; visibility: visible; transition-delay: 0s; }
+
+        #replay-overlay { display: block; opacity: 0; visibility: hidden; transition: opacity 0.35s ease, visibility 0s 0.35s; }
+        #replay-overlay.show { opacity: 1; visibility: visible; transition-delay: 0s; }
+
+        /* Letterbox bars slide in for replays and photo mode */
+        body::before, body::after {
+            content: ''; position: fixed; left: 0; width: 100%; height: 11vh; background: #000;
+            z-index: 1150; pointer-events: none; transition: transform 0.4s ease;
+        }
+        body::before { top: 0; transform: translateY(-101%); }
+        body::after { bottom: 0; transform: translateY(101%); }
+        body.photo::before, body.photo::after,
+        body.replaying::before, body.replaying::after { transform: none; }
+
+        /* A quick dip to black covers every jump across the map */
+        #curtain {
+            position: fixed; inset: 0; background: #000; opacity: 0; visibility: hidden; pointer-events: none;
+            z-index: 1190; transition: opacity 0.32s ease, visibility 0s 0.32s;
+        }
+        #curtain.on { opacity: 1; visibility: visible; transition: opacity 0.18s ease; }
+
+        /* ---- One message line, top centre ---- */
+        #notice {
+            position: fixed; top: 4.9rem; left: 50%; transform: translate(-50%, -6px);
+            display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 0.15rem 0.55rem;
+            max-width: min(92vw, 640px); padding: 0.32rem 0.95rem; border-radius: 12px; text-align: center;
+            background: rgba(8, 14, 20, 0.6); border: 1px solid var(--glass-border);
+            font-size: 1rem; letter-spacing: 0.04em; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+            opacity: 0; visibility: hidden; pointer-events: none; z-index: 8;
+            transition: opacity 0.3s ease, transform 0.3s ease, visibility 0s 0.3s;
+        }
+        #notice.on { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition-delay: 0s; }
+        #notice .n-who { font-size: 0.62rem; letter-spacing: 0.22em; color: var(--accent); text-transform: uppercase; font-weight: 700; }
+        #notice .n-title { font-weight: 700; }
+        #notice .n-sub { color: #b8c6cf; font-size: 0.86rem; }
+        #notice .n-who:empty, #notice .n-sub:empty, #notice .n-icon:empty { display: none; }
+        #notice.story { border-color: rgba(255, 210, 63, 0.35); }
+        #notice.story .n-title { font-style: italic; font-weight: 600; }
+        body.replaying #notice, body.hud-full #notice { display: none; }
+        body.touch #notice { top: 3.5rem; font-size: 0.85rem; padding: 0.22rem 0.7rem; }
+
+        #score-clock { min-width: 4.4rem; text-align: center; color: #fff; font-variant-numeric: tabular-nums; }
+        #score-clock.low { color: #ff5555; }
+        body.hud-full #score-clock { display: none; }
+
+        /* ---- Minimal HUD (the default): score and time, health and boost,
+                radar, crosshair, one objective marker. The rest shows up only
+                while it matters, then fades. "Full HUD" in settings brings
+                every instrument back. ---- */
+        body.hud-min .score-caption,
+        body.hud-min #score-kd,
+        body.hud-min .dots-label,
+        body.hud-min #compass,
+        body.hud-min #attitude-cluster,
+        body.hud-min .speed-container,
+        body.hud-min .bar-label,
+        body.hud-min .team-scores,
+        body.hud-min #weather-indicator,
+        body.hud-min #nav-panel,
+        body.hud-min #popups,
+        body.hud-min .tag,
+        body.hud-min #kill-banner,
+        body.hud-min #medal,
+        body.hud-min #radio,
+        body.hud-min #toasts { display: none !important; }
+
+        body.hud-min #controls-panel { display: none; }
+
+        /* Shown while relevant, then faded out */
+        body.hud-min [data-hud="ctx"] { opacity: 0; transition: opacity 0.6s ease; }
+        body.hud-min [data-hud="ctx"].cue { opacity: 1; transition: opacity 0.2s ease; }
+        body.hud-min #chat:not(.collapsed) { opacity: 1; }
+
+        body.hud-min #mill-dots {
+            background: none; border: none; padding: 0; font-size: 0.8rem;
+            opacity: 0.6; transition: opacity 0.5s ease; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+        }
+        body.hud-min #mill-dots.cue { opacity: 1; }
+
+        body.hud-min .bar-container { display: flex; align-items: center; gap: 0.4rem; width: auto; }
+        body.hud-min .health-container::before,
+        body.hud-min .energy-container::before {
+            width: 1em; text-align: center; font-size: 0.8rem; line-height: 1; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+        }
+        body.hud-min .health-container::before { content: '\271A'; color: #ff6b6b; }
+        body.hud-min .energy-container::before { content: '\26A1'; color: #4fc3ff; }
+        body.hud-min .health-bar, body.hud-min .energy-bar { width: 190px; height: 10px; }
+
+        body.hud-min:not(.touch) .health-container { bottom: 2.2rem; }
+        body.hud-min:not(.touch) .energy-container { bottom: 1rem; }
+        body.hud-min:not(.touch) #weapons-hud { left: calc(1rem + 236px); bottom: 0.95rem; flex-direction: row; gap: 0.9rem; }
+        body.hud-min:not(.touch) #controls-hint {
+            display: block !important; left: 1rem; bottom: 3.7rem; padding: 0;
+            background: none; border: none; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+        }
+        body.hud-min:not(.touch) #radar { top: 1rem; }
+        body.hud-min:not(.touch) #notify-column { top: calc(1rem + 178px); width: 250px; }
+        body.hud-min:not(.touch) #capture-progress { top: 7.5rem; }
+
+        body.touch.hud-min .health-container { top: 6.2rem; bottom: auto; }
+        body.touch.hud-min .energy-container { top: 7.5rem; bottom: auto; }
+        body.touch.hud-min #weapons-hud { top: 9rem; }
+        body.touch.hud-min .health-bar, body.touch.hud-min .energy-bar { width: 140px; height: 9px; }
+
+        @media (prefers-reduced-motion: reduce) {
+            #curtain, #curtain.on, #notice, #intermission, #end-screen, #end-screen #end-card,
+            body::before, body::after { transition-duration: 0.01s; }
+        }
     </style>
 </head>
 <body>
@@ -2049,9 +2171,8 @@
             <div id="login-form">
                 <h1>Dutch Village Flight</h1>
                 <h2>The Windmill Cup</h2>
-                <p id="dispatch">Every June the villages of <b class="red">Oostwijk</b> and <b class="blue">Westerhaven</b> fly for the Cup.
-                Hold the windmills at the last light and your village grinds the midsummer flour. Lose, and you serve it.
-                It has gone on for ninety-one years. Nobody remembers why. Everyone takes it far too seriously.</p>
+                <p id="dispatch">Two rival villages, <b class="red">Oostwijk</b> and <b class="blue">Westerhaven</b>, fly for the Windmill Cup.
+                Hold the most windmills when the bell rings at last light, and the Cup is yours.</p>
 
                 <div id="login-rank">Lv 1 · Cadet · 0 XP</div>
                 <div id="mode-picker">
@@ -2157,6 +2278,7 @@
                 <div id="score-row">
                     <span id="score-red" class="score-pill">RED 0</span>
                     <span id="score-kd" class="score-pill">K <span id="kills">0</span> &middot; D <span id="deaths">0</span></span>
+                    <span id="score-clock" class="score-pill">5:00</span>
                     <span id="score-blue" class="score-pill">0 BLUE</span>
                 </div>
                 <div id="mill-dots" title="Windmills held"><span class="dots-label">Windmills held</span><span id="windmill-status"></span></div>
@@ -2202,7 +2324,7 @@
 
             <div class="crosshair"></div>
             <div id="damage-dir"></div>
-            <div id="weapons-hud"></div>
+            <div id="weapons-hud" data-hud="ctx"></div>
             <div id="msl-lock"><div class="ring"></div><div class="label">LOCKING</div></div>
             <div id="missile-warn">MISSILE<small>G · FLARES · BREAK HARD</small></div>
             <div id="missile-dir"></div>
@@ -2219,7 +2341,7 @@
             <div id="lead"></div>
             <div id="waypoint"><div class="wp-arrow"></div><div class="wp-diamond"></div><div class="wp-label"></div></div>
             <div id="popups"></div>
-            <div id="controls-hint" class="glass"><span class="key">H</span> controls</div>
+            <div id="controls-hint" class="glass" data-hud="ctx"><span class="key">H</span> controls</div>
             <div id="hitmarker"></div>
             <div id="pullup">PULL UP</div>
             <div id="stall">STALL · NOSE DOWN</div>
@@ -2260,6 +2382,8 @@
             <div id="toasts"></div>
             <div id="hint" class="glass"></div>
         </div>
+
+        <div id="notice"><span class="n-icon"></span><span class="n-who"></span><span class="n-title"></span><span class="n-sub"></span></div>
 
         <div id="touch-ui">
             <div id="stick-zone">
@@ -2309,6 +2433,8 @@
         <div id="boost-vignette" class="vignette"></div>
         <div id="damage-vignette" class="vignette"></div>
 
+        <div id="curtain"></div>
+
         <div id="settings-panel" class="ui-element glass">
             <h2>Settings</h2>
             <div class="setting-row">
@@ -2343,8 +2469,8 @@
                 <input type="checkbox" id="set-assist" checked>
             </div>
             <div class="setting-row">
-                <label for="set-simple">Simple HUD</label>
-                <input type="checkbox" id="set-simple">
+                <label for="set-fullhud">Full HUD (compass, targets list, all instruments)</label>
+                <input type="checkbox" id="set-fullhud">
             </div>
             <div class="setting-row">
                 <label for="set-fps">Show FPS</label>
@@ -2398,7 +2524,7 @@
             <p><strong>Win</strong></p>
             <p>Follow the yellow marker to a windmill and fly inside its big glowing circle until the bar fills. Owned windmills score every few seconds. Shooting down enemy planes scores too.</p>
             <p><strong>Relax</strong></p>
-            <p>You fly for whichever village needs a pilot. The other pilots are the villages' regulars: you'll hear them on the radio.</p>
+            <p>You fly for whichever village needs a pilot. The lighthouse keeper judges the Cup: when her bell rings at last light, the village holding the most windmills wins.</p>
             <p>Bots leave you alone for your first minute in the air, and we'll walk you through the controls once you're airborne.</p>
             <button id="tutorial-close">Take off! 🛫</button>
         </div>
@@ -2420,7 +2546,7 @@
             </div>
         </div>
 
-        <div id="chat" class="ui-element glass">
+        <div id="chat" class="ui-element glass" data-hud="ctx">
             <div id="chat-messages"></div>
             <input type="text" id="chat-input" placeholder="Press Enter to chat">
         </div>

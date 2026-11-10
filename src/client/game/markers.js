@@ -14,6 +14,8 @@ export class MarkerMethods {
     if (this.isTouch || window.innerHeight < 600) {
       return forEdgeMarkers ? { left: 170, right: 225, top: 120, bottom: 125 } : { left: 170, right: 225, top: 110, bottom: 135 };
     }
+    // Clean HUD: only the score bar (top), the bars (bottom) and the radar (right) to avoid
+    if (this.instruments?.minimal) return { left: 60, right: 200, top: 110, bottom: 90 };
     return forEdgeMarkers ? { left: 235, right: 330, top: 175, bottom: 235 } : { left: 240, right: 330, top: 150, bottom: 230 };
   }
 
@@ -95,6 +97,7 @@ export class MarkerMethods {
             name: `${mill.name.toUpperCase()} MILL`, owner, target: this.waypointTargetId === mill.id });
         }
         if (this.waypointTargetId === mill.id) continue; // the big marker already covers it
+        if (this.instruments.minimal && dist > 600) continue; // clean HUD: only the mills close by get a label
         tmp.set(mill.x, 36, mill.z);
         const m = this.screenMarkerFor(tmp, EDGE_INSET);
         if (!m.inView) continue;
@@ -145,30 +148,6 @@ export class MarkerMethods {
   spawnHitSpark(position) {
     this.fx.hitSpark(position);
     this.playSound('bullet-hit', position);
-  }
-
-  /**
-   * Keeps the edges readable: only the nearest few arrows of each kind,
-   * and any two that would overprint get nudged apart.
-   */
-  declutterMarkers(list) {
-    const maxEach = this.isTouch ? 2 : 3;
-    const byDist = (a, b) => (a.dist || 0) - (b.dist || 0);
-    const enemies = list.filter(m => m.cls === 'enemy' && !m.inView).sort(byDist).slice(0, maxEach);
-    const mills = list.filter(m => m.cls !== 'enemy' && !m.inView).sort(byDist).slice(0, maxEach);
-    const inView = list.filter(m => m.inView);
-    const edge = enemies.concat(mills).sort((a, b) => a.y - b.y || a.x - b.x);
-    const minGapX = 120, minGapY = 34;
-    for (let i = 1; i < edge.length; i++) {
-      for (let j = 0; j < i; j++) {
-        const a = edge[j], b = edge[i];
-        if (Math.abs(a.y - b.y) < minGapY && Math.abs(a.x - b.x) < minGapX) {
-          b.x = a.x + (b.x >= a.x ? minGapX : -minGapX);
-          b.x = Math.max(60, Math.min(window.innerWidth - 60, b.x));
-        }
-      }
-    }
-    return inView.concat(edge);
   }
 
   /** Floating name / distance / BOT tags over nearby planes */

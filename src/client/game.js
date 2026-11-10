@@ -34,6 +34,7 @@ import { ReplayMethods } from './game/replay.js';
 import { CameraMethods } from './game/camera.js';
 import { GamepadMethods } from './game/gamepad.js';
 import { CareerMethods } from './game/career.js';
+import { StoryMethods } from './game/story.js';
 
 class Game {
   constructor() {
@@ -216,6 +217,9 @@ class Game {
     this.streak = 0;
     this.radarSweepUntil = 0;
     this.calloutsDone = new Set();
+    this.storyDone = new Set();   // Keeper lines already said this match
+    this.curtainJobs = [];
+    this.reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     this.xpBanked = false;
     this.timeScale = 1;          // world speed (slow motion < 1)
 
@@ -315,7 +319,7 @@ class Game {
     });
     this.postfx = new PostFX(this.renderer, this.scene, this.camera);
     this.applySettings(this.instruments.settings);
-    this.chatter = new Chatter((n) => this.playSound(n));
+    this.chatter = new Chatter((n) => this.playSound(n), (n) => this.instruments.notify(n));
 
     this.initCameraModes();
     this.setupUI();
@@ -455,8 +459,11 @@ class Game {
         localStorage.setItem('dvf.plane', this.pendingPlane);
       } catch (e) { /* ignore */ }
       this.connectToServer(username);
-      loginScreen.style.display = 'none';
-      hud.style.display = 'block';
+      // Menu to cockpit behind a dip to black; it lifts when the plane is in the air
+      this.curtain(() => {
+        loginScreen.style.display = 'none';
+        hud.style.display = 'block';
+      }, true);
     };
     startButton.addEventListener('click', start);
     // Browsers only allow sound after a gesture: the first click or key on
@@ -760,7 +767,7 @@ class Game {
         this.instruments.toast('📷', 'Screenshot saved', 'Check your downloads folder');
       }
     }
-    if (this.instruments) this.instruments.tickFps(delta);
+    if (this.instruments) { this.instruments.tickFps(delta); this.instruments.tick(this.lastFrameMs); }
     this.watchFrameRate(delta);
   }
 
@@ -781,7 +788,7 @@ class Game {
 }
 
 // Mix every method group into Game (own methods win on name clashes)
-for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, AudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods, WeaponMethods, ReplayMethods, CameraMethods, GamepadMethods, CareerMethods]) {
+for (const mixin of [TerrainMethods, EffectsMethods, WeatherMethods, WindmillMethods, AirfieldMethods, ShipMethods, NetworkMethods, AudioMethods, HudMethods, InputMethods, FlightMethods, GuidanceMethods, ProgressionMethods, MarkerMethods, WeaponMethods, ReplayMethods, CameraMethods, GamepadMethods, CareerMethods, StoryMethods]) {
   for (const name of Object.getOwnPropertyNames(mixin.prototype)) {
     if (name === 'constructor' || Object.prototype.hasOwnProperty.call(Game.prototype, name)) continue;
     Object.defineProperty(Game.prototype, name, Object.getOwnPropertyDescriptor(mixin.prototype, name));

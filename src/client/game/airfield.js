@@ -111,7 +111,7 @@ export class AirfieldMethods {
 
     // Show takeoff overlay
     const overlay = document.getElementById('takeoff-overlay');
-    if (overlay) overlay.style.display = 'flex';
+    if (overlay) overlay.classList.add('on');
   }
 
   updateTakeoff(delta) {
@@ -180,7 +180,7 @@ export class AirfieldMethods {
         this.pitchAngle = ship.rotation.x;
         ship.position.y = GAME_CONFIG.FLIGHT_HEIGHT;
 
-        if (overlay) overlay.style.display = 'none';
+        if (overlay) overlay.classList.remove('on');
       }
     }
 
@@ -210,6 +210,6 @@ export class AirfieldMethods {
     this.resetChaseCamera();
 
     const overlay = document.getElementById('takeoff-overlay');
-    if (overlay) overlay.style.display = 'none';
+    if (overlay) overlay.classList.remove('on');
   }
 }

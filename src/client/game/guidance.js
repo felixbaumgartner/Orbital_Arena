@@ -1,7 +1,7 @@
 // Onboarding, waypoints, targeting, intermission and spawning.
 // Methods are mixed into the Game class (see game.js); `this` is the Game.
 import * as THREE from 'three';
-import { TEAMS } from '../ui/chatter.js';
+import { TEAMS, ACTS } from '../ui/chatter.js';
 import { GAME_CONFIG, CAPTURE_WINDMILLS } from '../config.js';
 
 export class GuidanceMethods {
@@ -12,13 +12,19 @@ export class GuidanceMethods {
   /** Called the moment the player gets control after takeoff */
   onAirborne() {
     this.controlsPanelTimer = GAME_CONFIG.CONTROLS_PANEL_SECONDS;
+    this.airborneAt = this.animationTime;
     if (this.touch) this.touch.show(true);
-    if (this.firstFlight && !this.onboarding) this.startOnboarding();
-    else if (!this.isTouch && this.instruments?.settings.mouse !== false && !this.pointerLocked) {
-      // Wait for the countdown and team banner to clear before more text
-      const delay = Math.max(0, this.countdownEndsAt - performance.now()) + 2500;
+    // A reminder of where the key list lives, for a pilot's first few flights
+    let flights = 0;
+    try { flights = parseInt(localStorage.getItem('dvf.flights') || '0', 10) || 0; localStorage.setItem('dvf.flights', String(flights + 1)); } catch (e) { /* ignore */ }
+    if (flights < 3) this.instruments.cue('controls-hint', GAME_CONFIG.CONTROLS_PANEL_SECONDS);
+    if (this.firstFlight && !this.onboarding) { this.startOnboarding(); return; }
+    // The opening seconds belong to the countdown and then the Keeper's one line
+    this.scheduleStory();
+    if (!this.isTouch && this.instruments?.settings.mouse !== false && !this.pointerLocked) {
+      const delay = Math.max(0, this.countdownEndsAt - performance.now()) + 9000;
       setTimeout(() => {
-        if (!this.pointerLocked) this.instruments.toast('🖱️', 'Click the world to steer with the mouse', 'A / D and ↑ / ↓ work too');
+        if (!this.pointerLocked && !this.dead && !this.matchOver) this.instruments.toast('🖱️', 'Click the world to steer with the mouse', 'A / D and ↑ / ↓ work too');
       }, delay);
     }
   }
@@ -79,6 +85,8 @@ export class GuidanceMethods {
       if (ob.doneTimer <= 0) {
         this.instruments.setHint(null);
         this.onboarding = null;
+        // Flight school is over: the Keeper sets the scene
+        this.storyBeat(this.beatForRound());
       }
       return;
     }
@@ -89,9 +97,8 @@ export class GuidanceMethods {
       ob.index++;
       this.playSound('pickup');
       if (ob.index >= ob.steps.length) {
-        ob.doneTimer = 7;
-        this.instruments.setHint(
-          `You're ready! Hold windmills for points, +${this.rules.killScore} per shoot-down. Good hunting.`, 'Flight school complete');
+        ob.doneTimer = 2.5;
+        this.instruments.setHint('You can fly. Now go and win it.', 'Flight school complete');
       } else {
         this.showOnboardingStep();
       }
@@ -102,7 +109,7 @@ export class GuidanceMethods {
     if (!this.onboarding) return;
     this.onboarding = null;
     this.instruments.setHint(null);
-    this.instruments.toast('🎓', 'Tutorial skipped', 'Follow the yellow marker to a windmill');
+    this.storyBeat(this.beatForRound());
   }
 
   nearAnyWindmill() {
@@ -320,8 +327,7 @@ export class GuidanceMethods {
     const el = document.getElementById('intermission');
     if (!el) return;
     const winName = d.winner ? TEAMS[d.winner].short : null;
-    const acts = ['Act I · The opening ceremony', 'Act II · The long afternoon', 'Act III · The last light'];
-    el.querySelector('.im-round').textContent = `${acts[d.round - 1] || 'Round ' + d.round} · complete`;
+    el.querySelector('.im-round').textContent = `${ACTS[d.round - 1] || 'Round ' + d.round} · complete`;
     const title = el.querySelector('.im-title');
     title.textContent = winName ? `${winName} WINS THE ROUND` : 'ROUND DRAWN';
     title.className = `im-title ${d.winner || ''}`;
@@ -375,7 +381,7 @@ export class GuidanceMethods {
     this.pitchAngle = 0;
     this.takeoffPhase = null;
     const overlay = document.getElementById('takeoff-overlay');
-    if (overlay) overlay.style.display = 'none';
+    if (overlay) overlay.classList.remove('on');
     // Face the nearest objective (Domination) or the arena centre
     let target = { x: 0, z: 0 };
     if (this.mode !== 'tdm') {

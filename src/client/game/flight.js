@@ -334,8 +334,10 @@ export class FlightMethods {
         if (this.discovered.has(lm.id)) continue;
         const dx = ship.position.x - lm.x, dz = ship.position.z - lm.z;
         if (dx * dx + dz * dz < 150 * 150) {
+          // Told only in a quiet moment; otherwise it waits for the next pass
+          if (!this.loreOk()) continue;
           this.discovered.add(lm.id);
-          this.instruments.toast(lm.icon, `Discovered: ${lm.name}`, lm.subtitle);
+          this.lore(lm.icon, lm.name, lm.subtitle);
           this.playSound('pickup');
         }
       }
@@ -350,10 +352,10 @@ export class FlightMethods {
       if (!this.visitedBlocks.has(key)) {
         this.visitedBlocks.add(key);
         const biome = this.getBiome(cx, cz);
-        if (biome === 'village') {
-          this.instruments.toast('🏘️', `Welcome to ${this.villageName(bx, bz)}`, 'Village');
-        } else if (biome === 'waterland') {
-          this.instruments.toast('🌊', `${this.villageName(bx, bz)} Polder`, 'Waterland');
+        if (biome === 'village' && this.loreOk()) {
+          this.lore('🏘️', this.villageName(bx, bz), 'Village');
+        } else if (biome === 'waterland' && this.loreOk()) {
+          this.lore('🌊', `${this.villageName(bx, bz)} Polder`, 'Waterland');
         }
       }
     }
@@ -471,8 +473,7 @@ export class FlightMethods {
     // Nightfall is a story beat: once per evening someone says so
     if (this.localPlayer && sky.nightFactor > 0.5 && !this.nightTold) {
       this.nightTold = true;
-      this.instruments.toast('🌙', 'The last light goes', 'Lit planes show further; the treeline hides you');
-      setTimeout(() => this.radio(null, 'night'), 2500);
+      this.instruments.toast('🌙', 'Night falls', 'Lit planes show further; the treeline hides you');
     } else if (sky.nightFactor < 0.2) {
       this.nightTold = false;
     }
@@ -518,7 +519,7 @@ export class FlightMethods {
       if (text) text.textContent = 'CRASHED!';
       const sub = document.getElementById('crash-sub');
       if (sub) sub.textContent = '-20 health · climbing out, fly over obstacles';
-      overlay.style.display = 'flex';
+      overlay.classList.add('on');
     }
 
     // Real damage, kept in sync with the server (which can rule it fatal)
@@ -535,7 +536,7 @@ export class FlightMethods {
     setTimeout(() => {
       this.crashed = false;
       if (this.dead) return; // fatal crash — the server respawn takes over
-      if (overlay) overlay.style.display = 'none';
+      if (overlay) overlay.classList.remove('on');
       this.crashGrace = GAME_CONFIG.CRASH_GRACE;
     }, GAME_CONFIG.CRASH_DURATION);
   }

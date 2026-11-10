@@ -61,19 +61,6 @@ export class ProgressionMethods {
     }
   }
 
-  /** A random bot on a team speaks (or a specific one when named) */
-  radio(team, event, name = null, force = false) {
-    if (!this.chatter || !this.gameState?.players) return;
-    let speaker = name;
-    if (!speaker) {
-      const bots = this.gameState.players.filter(p => p.isBot && (!team || p.team === team) && !String(p.username).includes('Wingman'));
-      if (!bots.length) return;
-      const pick = bots[Math.floor(Math.random() * bots.length)];
-      speaker = pick.username; team = pick.team;
-    }
-    this.chatter.say(speaker, team, event, force);
-  }
-
   /** Fills the login-screen hangar with what this pilot has unlocked */
   setupHangar() {
     const level = this.levelFor(this.totalXp());

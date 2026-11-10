@@ -72,7 +72,6 @@ export class WeatherMethods {
         ws.next = this.weatherCycle[ws.index];
         if (ws.next === 'rainy' && this.localPlayer) {
           this.instruments.toast('🌧️', 'A storm is coming in off the sea', 'Radar and vision shrink for everyone');
-          setTimeout(() => this.radio(null, 'storm'), 2500);
         }
       }
     } else {

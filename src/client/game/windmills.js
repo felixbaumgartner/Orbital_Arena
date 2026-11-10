@@ -160,7 +160,7 @@ export class WindmillMethods {
     const captureLabel = document.getElementById('capture-label');
     const captureFill = document.getElementById('capture-fill');
 
-    if (nearestMill && !this.millLoreSeen.has(nearestMill.config.id) && this.controlsEnabled) {
+    if (nearestMill && !this.millLoreSeen.has(nearestMill.config.id) && this.loreOk()) {
       this.millLoreSeen.add(nearestMill.config.id);
       const lore = {
         mill_n: ['North Mill', 'The oldest of the five. Its sails have not stopped since 1741.'],
@@ -169,10 +169,10 @@ export class WindmillMethods {
         mill_w: ['West Mill', 'Grinds the flour for the midsummer feast. Whoever holds it at the last light wins the year.'],
         mill_c: ['Hill Mill', 'On the only hill in the polder. You can see all four others from the cap.'],
       }[nearestMill.config.id];
-      if (lore) this.instruments.toast('🌾', lore[0], lore[1]);
+      if (lore) this.lore('🌾', lore[0], lore[1]);
     }
     if (nearestMill && captureUI) {
-      captureUI.style.display = 'block';
+      if (!this.captureShown) { this.captureShown = true; captureUI.style.display = 'block'; }
       if (captureLabel) {
         const st = this.windmillStates[nearestMill.config.id];
         const mine = st?.team === this.localPlayer?.team;
@@ -193,7 +193,8 @@ export class WindmillMethods {
           captureFill.style.backgroundColor = '#ffffff';
         }
       }
-    } else if (captureUI) {
+    } else if (captureUI && this.captureShown) {
+      this.captureShown = false;
       captureUI.style.display = 'none';
     }
 
@@ -204,6 +205,12 @@ export class WindmillMethods {
     const el = document.getElementById('windmill-status');
     if (!el) return;
 
+    // Only touch the page when ownership actually changes
+    let key = '';
+    for (const config of CAPTURE_WINDMILLS) key += (this.windmillStates[config.id]?.team || '-')[0];
+    if (key === this.millDotsKey) return;
+    const first = this.millDotsKey === undefined;
+    this.millDotsKey = key;
     let html = '';
     for (const config of CAPTURE_WINDMILLS) {
       const state = this.windmillStates[config.id];
@@ -214,5 +221,7 @@ export class WindmillMethods {
       html += `<span style="color:${color}; margin: 0 3px;" title="${config.name}">${symbol}</span>`;
     }
     el.innerHTML = html;
+    // A mill changed hands: the dots light up for a few seconds
+    if (!first) this.instruments?.cue('mill-dots', 6);
   }
 }

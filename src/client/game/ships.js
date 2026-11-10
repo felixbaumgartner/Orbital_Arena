@@ -262,6 +262,7 @@ export class ShipMethods {
     this.playSound('shot');
     this.fx.muzzleFlash(projectile.position);
     this.recordShot(this.localPlayer.id, projectile.position, dir);
+    this.lastCombatAt = this.animationTime;
     this.camKick(0.22); // recoil: a nudge back, the aim point holds still
 
     if (this.socket && this.isConnected) {

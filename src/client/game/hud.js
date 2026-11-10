@@ -150,6 +150,8 @@ export class HudMethods {
       this.lastTimerText = text;
       el.textContent = text;
       el.classList.toggle('low', remaining < 31000);
+      const clock = document.getElementById('score-clock');
+      if (clock) { clock.textContent = text; clock.classList.toggle('low', remaining < 31000); }
     }
 
     // Match callouts
@@ -157,13 +159,9 @@ export class HudMethods {
       const s = this.gameState.scores || { red: 0, blue: 0 };
       const my = s[this.localPlayer.team] || 0, their = s[this.localPlayer.team === 'red' ? 'blue' : 'red'] || 0;
       const standing = my > their ? `You lead ${my}–${their}` : my < their ? `You trail ${my}–${their}` : `Tied ${my}–${their}`;
-      if (remaining < 150000 && remaining > 140000 && !this.calloutsDone.has('half')) {
-        this.calloutsDone.add('half');
-        this.instruments.toast('⏱️', 'Halfway', standing);
-      }
       if (remaining < 30000 && remaining > 20000 && !this.calloutsDone.has('final')) {
         this.calloutsDone.add('final');
-        this.instruments.toast('⏱️', 'Final 30 seconds!', standing);
+        this.instruments.toast('⏱️', 'Final 30 seconds!', standing, 2);
         this.playSound('warning');
         this.announce('hurryUp');
       }
@@ -183,7 +181,9 @@ export class HudMethods {
     const n = left > 0 ? Math.ceil(left / 1000) : 'GO!';
     if (n !== this.countdownLast) {
       this.countdownLast = n;
-      this.instruments.setCountdown(n === 'GO!' ? 'FIGHT' : 'MATCH STARTS IN', n);
+      // The wait doubles as the introduction: which village you fly for
+      const side = this.localPlayer?.team ? `YOU FLY FOR ${TEAMS[this.localPlayer.team].short}` : 'MATCH STARTS IN';
+      this.instruments.setCountdown(n === 'GO!' ? 'FIGHT' : side, n);
       // The announcer counts the last three down and calls the fight
       if (n === 'GO!') { this.announce('fight'); this.playSound('go'); }
       else if (n <= 3) this.announce(['one', 'two', 'three'][n - 1]);
@@ -200,9 +200,12 @@ export class HudMethods {
     if (killed) el.classList.add('kill');
   }
 
-  addKillFeed(attackerName, victimName, weapon = 'gun') {
+  /** about: { mine, team } — whether the kill involved you or your village */
+  addKillFeed(attackerName, victimName, weapon = 'gun', about = { mine: false, team: true }) {
     const feed = document.getElementById('kill-feed');
     if (!feed) return;
+    // Clean HUD: only your teammates' fights; your own are on the message line
+    if (this.instruments.minimal && (about.mine || !about.team)) return;
     const entry = document.createElement('div');
     entry.className = 'kill-entry';
     // Rocket for missile kills, bomb for bomb kills, plane for guns
@@ -214,6 +217,10 @@ export class HudMethods {
   }
 
   showKillBanner(victimName) {
+    if (this.instruments.minimal) {
+      this.instruments.notify({ key: 'kill', pri: 3, icon: '✈️', title: `Shot down ${victimName}`, sub: '+100', ttl: 3000 });
+      return;
+    }
     const el = document.getElementById('kill-banner');
     if (!el) return;
     el.textContent = `SPLASH! You shot down ${victimName}`;
@@ -225,6 +232,8 @@ export class HudMethods {
   showTeamBanner(team) {
     const el = document.getElementById('team-banner');
     if (!el || !team) return;
+    // The countdown already says it; the banner is for pilots who join mid-round
+    if (this.countdownEndsAt && this.countdownEndsAt > performance.now()) return;
     const enemy = team === 'red' ? 'blue' : 'red';
     el.textContent = '';
     el.appendChild(document.createTextNode(`YOU FLY FOR ${TEAMS[team].short}`));
@@ -245,6 +254,7 @@ export class HudMethods {
     el.innerHTML = `<strong>${this.sanitizeInput(username)}:</strong> ${this.sanitizeInput(message)}`;
     chatMessages.appendChild(el);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+    this.instruments?.cue('chat', 6);
     while (chatMessages.children.length > 50) chatMessages.removeChild(chatMessages.firstChild);
   }
 
@@ -264,7 +274,7 @@ export class HudMethods {
     if (overlay) {
       const text = overlay.querySelector('.crash-text');
       if (text) text.textContent = attackerName ? `SHOT DOWN BY ${attackerName.toUpperCase()}` : 'SHOT DOWN!';
-      overlay.style.display = 'flex';
+      overlay.classList.add('on');
     }
     // Respawn countdown (server respawns after RESPAWN_DELAY = 3s)
     clearInterval(this.respawnTicker);
@@ -371,11 +381,8 @@ export class HudMethods {
 
     const reasonEl = document.getElementById('end-reason');
     if (reasonEl) {
-      const target = this.rules.tdmTarget || 30;
-      const winName = winner ? TEAMS[winner].village : '';
-      reasonEl.textContent = winner
-        ? `${winName} takes the Cup ${scores.red}–${scores.blue} in rounds · ${TEAMS[winner === 'red' ? 'blue' : 'red'].village} serves the flour`
-        : 'Rounds split evenly · both villages bake';
+      // The Keeper has the last word
+      reasonEl.textContent = `The Keeper: “${this.storyCloser(winner)}”`;
     }
     const mvpEl = document.getElementById('end-mvp');
     const mvp = this.gameState.mvp;
@@ -414,6 +421,6 @@ export class HudMethods {
     }
 
     this.controlsEnabled = false;
-    overlay.style.display = 'flex';
+    overlay.classList.add('on');
   }
 }

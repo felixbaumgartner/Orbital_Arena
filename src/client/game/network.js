@@ -147,10 +147,6 @@ export class NetworkMethods {
           const m = Math.floor(rem / 60000), sec = Math.floor((rem % 60000) / 1000);
           this.instruments.toast('⏱️', 'Match in progress', `${m}:${sec.toString().padStart(2, '0')} left — jump in!`);
         }
-        setTimeout(() => this.radio(this.localPlayer?.team, 'hello', null, true), 9000);
-        setTimeout(() => this.instruments.toast('🏆', 'How to score', this.mode === 'tdm'
-          ? `Team Deathmatch · every shoot-down counts · first to ${this.rules.tdmTarget || 30} wins`
-          : `Hold windmills: +1 every ${this.rules.millTickSeconds}s each · Shoot down a plane: +${this.rules.killScore}`), 4000);
 
         // First run: park on the runway and show the tutorial; takeoff
         // starts when it's dismissed. Repeat visits take off immediately.
@@ -166,9 +162,12 @@ export class NetworkMethods {
           this.placeCamera(ship, 0, 0);
           const tutorial = document.getElementById('tutorial');
           if (tutorial) tutorial.style.display = 'block';
+          this.curtainRelease();
         } else {
           // Repeat visits skip the runway: straight into the fight
           this.spawnAirborne(ship, data.player.position);
+          // The dip to black from the menu lifts on the plane already flying
+          this.curtainRelease();
         }
 
         this.showTeamBanner(this.localPlayer.team);
@@ -310,13 +309,8 @@ export class NetworkMethods {
           this.onKillEvent?.(data);
         }
 
-        // Radio: the cast reacts to kills involving you
-        if (data.killed) {
-          const att = this.gameState?.players?.find(p => p.id === data.attackerId);
-          const vic = this.gameState?.players?.find(p => p.id === data.targetId);
-          if (data.targetId === this.localPlayer?.id && att?.isBot) this.radio(att.team, 'killedYou', att.username);
-          else if (data.attackerId === this.localPlayer?.id && vic?.isBot) this.radio(vic.team, 'youKilledThem', vic.username);
-        }
+        // A fight involving you: lore and other flavour keep quiet for a while
+        if (data.attackerId === this.localPlayer?.id || data.targetId === this.localPlayer?.id) this.lastCombatAt = this.animationTime;
 
         // Shooter feedback: hitmarker + confirm sound, banner on kill
         if (data.attackerId === this.localPlayer?.id) {
@@ -335,7 +329,12 @@ export class NetworkMethods {
         }
 
         if (data.killed) {
-          this.addKillFeed(this.nameOf(data.attackerId), this.nameOf(data.targetId), data.weapon);
+          const me = this.localPlayer?.id, myTeam = this.localPlayer?.team;
+          const teamOf = (pid) => this.gameState?.players?.find(p => p.id === pid)?.team;
+          this.addKillFeed(this.nameOf(data.attackerId), this.nameOf(data.targetId), data.weapon, {
+            mine: data.attackerId === me || data.targetId === me,
+            team: teamOf(data.attackerId) === myTeam || teamOf(data.targetId) === myTeam,
+          });
         }
 
         if (data.targetId === this.localPlayer?.id) {
@@ -387,42 +386,8 @@ export class NetworkMethods {
       });
 
       socket.on('playerRespawn', (data) => {
-        this.knownHealth[data.playerId] = typeof data.health === 'number' ? data.health : 100;
-        const ship = this.players.get(data.playerId);
-        if (ship) {
-          ship.position.set(data.position.x, GAME_CONFIG.FLIGHT_HEIGHT, data.position.z);
-          ship.visible = true;
-          delete ship.userData.netPos;
-          delete ship.userData.netRot;
-          delete ship.userData.dVel;
-          // Other planes swell into view instead of popping in
-          if (data.playerId !== this.localPlayer?.id) {
-            if (!ship.userData.baseScale) ship.userData.baseScale = ship.scale.clone();
-            ship.userData.spawnIn = 0;
-          }
-        }
-        if (data.playerId === this.localPlayer?.id) {
-          // Flying again: the kill cam (if still rolling) gives way
-          if (ship && this.replay && this.replay.mine) this.replay.mine.pos.copy(ship.position);
-          if (this.replay && this.replay.kind === 'killcam') this.endReplay(true);
-          this.dead = false;
-          if (this.audio) this.audio.setMuffle(0, 0.6);
-          this.streak = 0;
-          if (ship) { this.faceNearestEnemy(ship); this.settleAfterTeleport(ship); }
-          clearInterval(this.respawnTicker);
-          const sub = document.getElementById('crash-sub');
-          if (sub) sub.textContent = '';
-          this.playerHealth = data.health;
-          this.setHealthBar(data.health);
-          this.updateEnergyBar(data.energy);
-          if (this.localPlayer) this.localPlayer.energy = data.energy;
-          const overlay = document.getElementById('crash-overlay');
-          if (overlay) {
-            overlay.style.display = 'none';
-            const text = overlay.querySelector('.crash-text');
-            if (text) text.textContent = 'CRASHED!';
-          }
-        }
+        if (data.playerId === this.localPlayer?.id && !this.matchOver) this.curtain(() => this.applyRespawn(data));
+        else this.applyRespawn(data);
       });
 
       socket.on('chatMessage', (data) => this.displayChatMessage(data.username, data.message));
@@ -447,10 +412,59 @@ export class NetworkMethods {
           if (overlay) {
             const text = overlay.querySelector('.crash-text');
             if (text) text.textContent = 'DESTROYED!';
-            overlay.style.display = 'flex';
+            overlay.classList.add('on');
           }
         }
       });
+      this.bindMatchEvents(socket);
+    } catch (error) {
+      console.error('Failed to bind server events:', error);
+    }
+  }
+
+  /** Puts a plane back in the air after it was shot down (or at a new round) */
+  applyRespawn(data) {
+    this.knownHealth[data.playerId] = typeof data.health === 'number' ? data.health : 100;
+    const ship = this.players.get(data.playerId);
+    if (ship) {
+      ship.position.set(data.position.x, GAME_CONFIG.FLIGHT_HEIGHT, data.position.z);
+      ship.visible = true;
+      delete ship.userData.netPos;
+      delete ship.userData.netRot;
+      delete ship.userData.dVel;
+      // Other planes swell into view instead of popping in
+      if (data.playerId !== this.localPlayer?.id) {
+        if (!ship.userData.baseScale) ship.userData.baseScale = ship.scale.clone();
+        ship.userData.spawnIn = 0;
+      }
+    }
+    if (data.playerId === this.localPlayer?.id) {
+      // Flying again: the kill cam (if still rolling) gives way
+      if (ship && this.replay && this.replay.mine) this.replay.mine.pos.copy(ship.position);
+      if (this.replay && this.replay.kind === 'killcam') this.endReplay(true);
+      this.dead = false;
+      if (this.audio) this.audio.setMuffle(0, 0.6);
+      this.streak = 0;
+      if (ship) { this.faceNearestEnemy(ship); this.settleAfterTeleport(ship); }
+      clearInterval(this.respawnTicker);
+      const sub = document.getElementById('crash-sub');
+      if (sub) sub.textContent = '';
+      this.playerHealth = data.health;
+      this.setHealthBar(data.health);
+      this.updateEnergyBar(data.energy);
+      if (this.localPlayer) this.localPlayer.energy = data.energy;
+      const overlay = document.getElementById('crash-overlay');
+      if (overlay) {
+        overlay.classList.remove('on');
+        const text = overlay.querySelector('.crash-text');
+        if (text) text.textContent = 'CRASHED!';
+      }
+    }
+  }
+
+  /** Windmills, rounds and killstreaks */
+  bindMatchEvents(socket) {
+    try {
 
       // Windmill capture updates from server
       socket.on('windmillUpdate', (data) => {
@@ -460,8 +474,6 @@ export class NetworkMethods {
             const myTeam = this.localPlayer?.team;
             if (prev && prev.team !== mill.team && mill.team) {
               this.playSound(mill.team === myTeam ? 'bell' : 'bell-low');
-              if (Math.random() < 0.6) this.radio(mill.team, 'capture');
-              else if (prev.team) this.radio(prev.team, 'lost');
             }
             if (prev && prev.team !== mill.team && mill.team === myTeam) {
               const ship = this.players.get(this.localPlayer.id);
@@ -479,10 +491,6 @@ export class NetworkMethods {
         if (!d) return;
         this.roundWins = d.roundWins || this.roundWins;
         if (d.winner && d.winner === this.localPlayer?.team) this.careerEvent('roundsWon');
-        if (d.winner) {
-          this.radio(d.winner, 'win', null, true);
-          setTimeout(() => this.radio(d.winner === 'red' ? 'blue' : 'red', 'lose', null, true), 3500);
-        }
         if (!d.final) {
           const intermission = () => {
             this.showIntermission(d);
@@ -510,10 +518,9 @@ export class NetworkMethods {
         if (this.gameState) this.gameState.scores = { red: 0, blue: 0 };
         this.updateHUD();
         this.applyModeHud();
-        const acts = ['Act I · The opening ceremony', 'Act II · The long afternoon', 'Act III · The last light'];
         this.announce(this.suddenDeath ? 'suddenDeath' : d.round >= (d.maxRounds || 3) ? 'finalRound' : `round${d.round}`);
-        this.instruments.toast(this.suddenDeath ? '🔥' : '🏁', acts[d.round - 1] || `Round ${d.round}`,
-          this.suddenDeath ? 'The bells ring at sundown · windmills score double' : `Round ${d.round} of ${d.maxRounds} · fresh windmills, fresh scores`);
+        // One line from the Keeper sets up the round, once the countdown clears
+        this.scheduleStory();
       });
 
       // Killstreak rewards
@@ -536,8 +543,6 @@ export class NetworkMethods {
           }
           this.playSound('streak');
         } else if (d.reward) {
-          const sp = this.gameState?.players?.find(p => p.id === d.playerId);
-          if (sp?.isBot) this.radio(sp.team, 'streak', sp.username);
           this.instruments.toast('🔥', `${d.username} is on a ${d.streak} kill streak`,
             d.reward === 'radar' ? 'Radar sweep' : d.reward === 'wingman' ? 'Wingman called in' : 'Airstrike!');
         }
@@ -707,7 +712,7 @@ export class NetworkMethods {
       this.dead = false;
       clearInterval(this.respawnTicker);
       const overlay = document.getElementById('crash-overlay');
-      if (overlay) overlay.style.display = 'none';
+      if (overlay) overlay.classList.remove('on');
       me.visible = true;
       this.spawnAirborne(me, data.player.position);
     }

@@ -389,6 +389,7 @@ export class WeaponMethods {
     _v.copy(target.position).project(this.camera);
     if (_v.z > 1 || Math.abs(_v.x) > 1.1 || Math.abs(_v.y) > 1.1) { el.style.display = 'none'; return; }
     const x = (_v.x * 0.5 + 0.5) * window.innerWidth, y = (-_v.y * 0.5 + 0.5) * window.innerHeight;
+    this.instruments.cue('weapons-hud', 1.5); // ammo stays up while the seeker is working
     el.style.display = 'block';
     el.style.left = `${x}px`;
     el.style.top = `${y}px`;
@@ -472,6 +473,8 @@ export class WeaponMethods {
     };
     el.innerHTML = row('msl', 'MSL', a.missiles || 0, lo.missiles, 'F') + row('flr', 'FLR', a.flares || 0, lo.flares, 'G') + row('bmb', 'BMB', a.bombs || 0, lo.bombs, 'B');
     el.classList.toggle('show', !!this.localPlayer);
+    // Ammo shows when it changes, then gets out of the way
+    this.instruments?.cue('weapons-hud', 4);
     document.getElementById('btn-msl')?.classList.toggle('hidden', !lo.missiles);
     document.getElementById('btn-bmb')?.classList.toggle('hidden', !lo.bombs);
   }
